@@ -4,6 +4,22 @@ All notable changes to this project are documented here.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 this project uses [Semantic Versioning](https://semver.org/).
 
+## [0.24.2] — 2026-10-10
+
+### Added
+
+- **Screenshots** of the three surfaces, committed under `assets/` and embedded
+  in both READMEs. They are listed in the package `files` whitelist, so the npm
+  page shows them too — an asset missing from that list reaches GitHub but not npm.
+
+### Fixed
+
+- The settings card could print 「归档来源：读取中…」 **directly beneath a real
+  count**. Both values come from the same response, so a visible count proves the
+  read already succeeded; the empty initial state contradicted the number above it
+  and read as a stuck spinner. When the list is present but the source string is
+  not yet set, it now says so instead.
+
 ## [0.24.1] — 2026-10-10
 
 ### Fixed
@@ -85,5 +101,6 @@ First public release (GitHub + npm).
 - The conversation-length (turn-count) sort and its `/turn-counts` host route —
   removed on request, and the host route was dead code once the UI was gone.
 
+[0.24.2]: https://github.com/loyalchiiina/dsh-archive-favorites-forge/releases/tag/v0.24.2
 [0.24.1]: https://github.com/loyalchiiina/dsh-archive-favorites-forge/releases/tag/v0.24.1
 [0.24.0]: https://github.com/loyalchiiina/dsh-archive-favorites-forge/releases/tag/v0.24.0

@@ -1,6 +1,6 @@
 {
   "name": "dsh-archive-favorites-forge",
-  "version": "0.24.1",
+  "version": "0.24.2",
   "description": "Favorites, copy id+path, per-session delete, idle batch archive and a favourites filter for DSH conversations — additive slot extensions over the shipped archive feature, editing no official file. 为 DSH 对话增加收藏、复制 ID+路径、单条删除、超时批量归档与收藏筛选。",
   "type": "module",
   "main": "lib/index.js",
@@ -15,7 +15,8 @@
     "README.md",
     "README.zh.md",
     "CHANGELOG.md",
-    "LICENSE"
+    "LICENSE",
+    "assets/*.png"
   ],
   "license": "MIT",
   "keywords": [

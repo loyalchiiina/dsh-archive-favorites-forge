@@ -14,6 +14,22 @@ English | [简体中文](README.zh.md)
 
 ---
 
+## Screenshots
+
+**1. The conversation menu** — favourite, copy id + path, and a guarded permanent delete, added as three rows to the shipped 「…」 menu:
+
+![Session menu](assets/01-session-menu.png)
+
+**2. The favourites filter** — two extra rows in the official 筛选会话 group, narrowing the sidebar to favourites that are archived and to favourites that are not:
+
+![Favourites filter](assets/02-favourites-filter.png)
+
+**3. The settings panel** — idle batch archive, the favourites list with archive state, and batch delete of archived conversations that are not favourites:
+
+![Settings panel](assets/03-settings-panel.png)
+
+---
+
 ## Why this exists
 
 DSH already ships an archive feature: the Workspace registry keeps a global
