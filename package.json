@@ -1,6 +1,6 @@
 {
   "name": "dsh-archive-favorites-forge",
-  "version": "0.24.0",
+  "version": "0.24.1",
   "description": "Favorites, copy id+path, per-session delete, idle batch archive and a favourites filter for DSH conversations — additive slot extensions over the shipped archive feature, editing no official file. 为 DSH 对话增加收藏、复制 ID+路径、单条删除、超时批量归档与收藏筛选。",
   "type": "module",
   "main": "lib/index.js",
@@ -13,6 +13,7 @@
     "lib/**/*.js",
     "cordis.patch.yml",
     "README.md",
+    "README.zh.md",
     "CHANGELOG.md",
     "LICENSE"
   ],
@@ -46,10 +47,10 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",
-    "@deepseek-ai/dsh": ">=0.1.7-rc.1"
+    "@deepseek-ai/dsh": ">=0.1.7-rc.1 <0.2.0-0 || >=0.2.0-rc.1"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",
-    "@deepseek-ai/dsh": ">=0.1.7-rc.1"
+    "@deepseek-ai/dsh": ">=0.1.7-rc.1 <0.2.0-0 || >=0.2.0-rc.1"
   }
 }

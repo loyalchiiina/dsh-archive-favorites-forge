@@ -4,10 +4,13 @@
 favourites filter for DeepSeek Harness conversations** — additive slot
 extensions over the shipped archive feature. It edits **no official file**.
 
-**为 DSH 对话增加：收藏、复制 ID+路径、单条删除、超时批量归档、收藏筛选**——
-全部挂在官方插槽上，不改官方一行代码。
+**给 DSH 的对话加上收藏、复制 ID+路径、单条删除、超时批量归档和收藏筛选 —— 全部挂在官方插槽上，不改官方一行代码。**
 
-MIT · [Changelog](CHANGELOG.md)
+[![npm](https://img.shields.io/badge/npm-dsh--archive--favorites--forge-cb3837?logo=npm)](https://www.npmjs.com/package/dsh-archive-favorites-forge)
+[![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![DSH](https://img.shields.io/badge/DSH-%E2%89%A5%200.2.0--rc.2-4f46e5)](https://github.com/loyalchiiina/dsh-archive-favorites-forge)
+
+English | [简体中文](README.zh.md)
 
 ---
 

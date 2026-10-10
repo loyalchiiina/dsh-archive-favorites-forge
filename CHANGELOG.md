@@ -4,6 +4,26 @@ All notable changes to this project are documented here.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 this project uses [Semantic Versioning](https://semver.org/).
 
+## [0.24.1] — 2026-10-10
+
+### Fixed
+
+- **`peerDependencies` silently excluded the installed harness.** The range
+  `>=0.1.7-rc.1` matches only the `0.1.7` tuple under node-semver's pre-release
+  rule, so it rejects `0.2.0-rc.2` — the version this plugin is built and tested
+  against — and a consumer would hit `ERESOLVE`. Verified with `semver`:
+  `satisfies("0.2.0-rc.2", ">=0.1.7-rc.1")` is **false**, while the corrected
+  range `>=0.1.7-rc.1 <0.2.0-0 || >=0.2.0-rc.1` is **true**. The range now
+  carries an explicit pre-release branch on the `0.2.0` tuple.
+- The README no longer points at a nonexistent `README.zh-CN.md`; a real
+  Chinese README now ships as `README.zh.md`.
+
+### Removed
+
+- The dead `/turn-counts` host route and its helpers. The client stopped calling
+  them when the conversation-length sort was removed, leaving an endpoint with
+  no consumer.
+
 ## [0.24.0] — 2026-10-10
 
 First public release (GitHub + npm).
@@ -65,4 +85,5 @@ First public release (GitHub + npm).
 - The conversation-length (turn-count) sort and its `/turn-counts` host route —
   removed on request, and the host route was dead code once the UI was gone.
 
+[0.24.1]: https://github.com/loyalchiiina/dsh-archive-favorites-forge/releases/tag/v0.24.1
 [0.24.0]: https://github.com/loyalchiiina/dsh-archive-favorites-forge/releases/tag/v0.24.0
