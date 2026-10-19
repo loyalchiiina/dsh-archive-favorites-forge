@@ -1,7 +1,7 @@
 {
   "name": "dsh-archive-favorites-forge",
-  "version": "0.24.3",
-  "description": "Favorites, copy id+path, per-session delete, idle batch archive and a favourites filter for DSH conversations — additive slot extensions over the shipped archive feature, editing no official file. 为 DSH 对话增加收藏、复制 ID+路径、单条删除、超时批量归档与收藏筛选。",
+  "version": "0.24.4",
+  "description": "Favourite any DSH conversation, copy its session id + transcript absolute path, delete one conversation permanently (guarded), batch-archive conversations idle for more than N hours, filter the sidebar down to favourites, and export a conversation list as tab-separated txt — additive slot extensions over the shipped archive feature, editing no official file. 为 DSH 对话加上收藏、复制 ID+路径、单条永久删除、超时批量归档与收藏筛选，并导出对话清单；全部挂在官方插槽上，不改官方一行代码。",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -22,7 +22,6 @@
     "assets/*.png",
     "locale/*.json",
     "icon.svg",
-    "README-zh.md",
     "README-es.md",
     "README-pt.md",
     "README-hi.md"

@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Archive Favorites Forge",
-    "description": "Turn your favorite replies into a browsable archive with folders, tags and one-click export."
+    "description": "Favourite DSH conversations, copy session id + transcript path, delete one permanently, batch-archive idle ones, filter the sidebar to favourites, and export the list as tab-separated txt — additive slot extensions that edit no official file."
   }
 }

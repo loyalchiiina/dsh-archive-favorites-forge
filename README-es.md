@@ -1,6 +1,6 @@
 # Archive Favorites Forge
 
-> Turn your favorite replies into a browsable archive with folders, tags and one-click export.
+> Favourite any DSH conversation, copy its session id + transcript path, delete one permanently, batch-archive the idle ones, filter the sidebar down to favourites, and export the list as tab-separated txt — additive slot extensions that edit no official file.
 
 > Full documentation: [English README](./README.md)
 
