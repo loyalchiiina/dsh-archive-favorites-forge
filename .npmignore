@@ -1,0 +1,18 @@
+# Local development leftovers that must never reach the published tarball.
+# `files` in package.json already narrows the include set, but npm applies
+# .npmignore on top of it, and a glob such as "lib" would otherwise sweep up
+# anything sitting next to the sources (editor backups, .bak-<timestamp>
+# snapshots taken before a risky edit, stray logs).
+*.bak
+*.bak-*
+*.log
+*.tgz
+
+# Probe fixtures: the suites build throwaway home directories here.
+.probe-home/
+.probe-export/
+.probe-export2/
+.probe-export3/
+.probe-filehistory/
+.probe-digest/
+.probe-ungrouped/

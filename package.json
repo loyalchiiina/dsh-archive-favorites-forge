@@ -1,6 +1,6 @@
 {
   "name": "dsh-archive-favorites-forge",
-  "version": "0.28.2",
+  "version": "0.28.3",
   "description": "Favourite any DSH conversation, copy its session id + transcript absolute path, delete one conversation permanently (guarded), batch-archive conversations idle for more than N hours, filter the sidebar down to favourites, export a conversation list as tab-separated txt, edit-resend or undo any user turn with automatic file snapshots that roll back with it, hand a long conversation over to a fresh window with a distilled brief (requirement timeline + task progress, preset inherited), and diagnose/clean the sidebar 'Ungrouped' bucket (with a boot-time warning and a dry-run-first one-click fix) — additive slot extensions over the shipped archive feature, editing no official file. 为 DSH 对话加上收藏、复制 ID+路径、单条永久删除、超时批量归档与收藏筛选，并导出对话清单；另含会话管理：用户消息可编辑重发、撤销整轮，AI 改过的文件自动快照并在回滚时一并还原；再含一键新窗口继续对话：把长对话蒸馏成「要求时间线 + 任务进度」交接书，继承原对话预设，在新窗口自动发送；还有侧栏「未分组」体检：一键只读诊断 + 先试算后执行的清理，并在每次开机时告警。全部挂在官方插槽上，不改官方一行代码。",
   "type": "module",
   "main": "lib/index.js",
@@ -12,8 +12,7 @@
     "./icon": "./icon.svg"
   },
   "files": [
-    "lib",
-    "lib/**/*.js",
+    "lib/*.js",
     "cordis.patch.yml",
     "README.md",
     "README.zh.md",

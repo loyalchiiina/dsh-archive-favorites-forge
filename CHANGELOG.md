@@ -4,6 +4,33 @@ All notable changes to this project are documented here.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 this project uses [Semantic Versioning](https://semver.org/).
 
+## 0.28.3 — 2026-10-29
+
+### 修复：npm 包里混进了两个本地备份文件
+
+**现象**：0.28.2 发布后，`npm pack` 清单里出现 `lib/client.js.bak-20261029-154053`
+（86.6 kB）与 `lib/index.js.bak-20261029-154053`（53.2 kB）。这两个文件是改
+`lib/` 前留的本地快照，不该出现在公开 tarball 里——内容虽已脱敏（复扫 0 命中），
+但多带 140 kB 且暴露内部操作痕迹。
+
+**根因**：`package.json` 的 `files` 里同时写了 `"lib"` 与 `"lib/**/*.js"`。`"lib"`
+会把该目录下的**所有**文件都收进去，而 `.gitignore` 里的 `*.bak-*` 对 npm 打包
+**无效**（npm 只认 `files` 白名单与 `.npmignore`）。
+
+**修复**：
+
+- `files` 由 `["lib", "lib/**/*.js"]` 收窄为 `["lib/*.js"]` —— 只收 `lib/` 顶层的
+  三个真实模块（`index.js` / `client.js` / `ungrouped-guard.js`）。
+- 新增 `.npmignore`（`*.bak`、`*.bak-*`、`*.log`、`*.tgz`，以及七个 `.probe-*/`
+  探针夹具目录），作为第二道闸门：以后无论 `files` 怎么写，备份与夹具都进不去。
+
+**验证**：`npm pack --dry-run` 清单 19 个文件、**无 `.bak`**；四套探针仍全绿
+（`probe-client` 195/0、`probe-digest` 58/0、`probe-filehistory` 33/0、
+`probe-ungrouped-guard` 58/0）；`package.json` 严格 JSON.parse 通过。
+
+**为什么升 0.28.3 而不是重发 0.28.2**：npm 同一版本号不可覆盖，`unpublish` 后
+24 小时内也不允许重发同号，所以按发布纪律升 patch 版本重发。
+
 ## 0.28.2 — 2026-10-29
 
 ### 修复：回合进行中插话的消息行上没有撤销 / 编辑 / 删除按钮
