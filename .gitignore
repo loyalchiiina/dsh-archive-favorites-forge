@@ -5,3 +5,7 @@ node_modules/
 .probe-export/
 .probe-export2/
 .probe-export3/
+.probe-filehistory/
+*.bak-*
+.probe-digest/
+.probe-ungrouped/

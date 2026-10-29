@@ -28,10 +28,10 @@ function ok(label, condition, detail) {
 // ---------------------------------------------------------------------------
 // Minimal React stand-in.
 //
-// The bundle uses only createElement, useState, useEffect. The stub records
-// element trees so we can assert what a component returns, and it runs
-// useState/useEffect for real so a component that violates the hook rules or
-// crashes on render fails the probe rather than silently rendering nothing.
+// The bundle uses only createElement, useState, useEffect and useRef. The stub
+// records element trees so we can assert what a component returns, and it runs
+// useState/useEffect/useRef for real so a component that violates the hook rules
+// or crashes on render fails the probe rather than silently rendering nothing.
 // ---------------------------------------------------------------------------
 
 let hookSlots = []
@@ -55,6 +55,18 @@ const React = {
     hookSlots[hookCursor] = hookSlots[hookCursor] ?? { value: undefined }
     hookCursor += 1
     effectQueue.push(fn)
+  },
+  // The confirm dialog holds two stable mutable boxes across renders: the dialog
+  // element itself (to focus it) and the element that had focus before opening
+  // (to restore it on close). Real React keys those boxes to the hook slot, so
+  // this stub must too — returning a fresh `{ current: null }` on each render
+  // would still "work" for these assertions while quietly breaking focus
+  // restoration, which is exactly the kind of regression the probe exists for.
+  useRef(initial) {
+    const slot = hookCursor
+    hookCursor += 1
+    if (hookSlots[slot] === undefined) hookSlots[slot] = { value: { current: initial ?? null } }
+    return hookSlots[slot].value
   },
 }
 
@@ -485,21 +497,35 @@ const entries = registeredEntries()
 const menuItems = entries.filter((r) => r.name === 'sidebar.workspaces.session.menu.item')
 const rowActions = entries.filter((r) => r.name === 'sidebar.workspaces.session.row.action')
 const sections = entries.filter((r) => r.name === 'settings.section')
+const overlays = entries.filter((r) => r.name === 'shell.overlay')
 
+// 0.25.0 folded the session-manager half in, which added exactly ONE new arm:
+// the `shell.overlay` confirm dialog. 0.28.0 added one more: the
+// "continue in a new window" session-menu row. The count therefore moved
+// 5 -> 6 -> 7 and the menu rows 3 -> 4. Keep these exact rather than `>=`: the
+// whole point is to notice an arm appearing or vanishing, since a duplicate
+// delete affordance or a silently-dropped registration is the failure mode that
+// a looser assertion would let through.
 const injectArms = registrations.filter((r) => r.component === undefined)
-ok('every inject arm ran (3 menu rows + 1 star + 1 section = 5)',
-  injectArms.length === 5,
+ok('every inject arm ran (4 menu rows + 1 star + 1 section + 1 overlay = 7)',
+  injectArms.length === 7,
   String(injectArms.length))
-ok('inject arms cover three distinct slot names',
-  new Set(injectArms.map((r) => r.name)).size === 3,
+ok('inject arms cover four distinct slot names',
+  new Set(injectArms.map((r) => r.name)).size === 4,
   JSON.stringify([...new Set(injectArms.map((r) => r.name))]))
-ok('registers 3 session-menu rows',
-  entries.filter((r) => r.name === 'sidebar.workspaces.session.menu.item').length === 3,
+ok('registers 4 session-menu rows',
+  entries.filter((r) => r.name === 'sidebar.workspaces.session.menu.item').length === 4,
   String(entries.filter((r) => r.name === 'sidebar.workspaces.session.menu.item').length))
 ok('registers 1 row-action star',
   entries.filter((r) => r.name === 'sidebar.workspaces.session.row.action').length === 1)
 ok('registers 1 settings section',
   entries.filter((r) => r.name === 'settings.section').length === 1)
+// One overlay only: the session-manager half's delete dialog. The upstream
+// plugin also shipped its own delete row-action and menu item; those were
+// deliberately NOT ported, so `aff-delete` stays the single delete affordance.
+ok('registers exactly 1 overlay (confirm dialog, no duplicate delete UI)',
+  overlays.length === 1 && overlays[0].id === 'aff-session-confirm',
+  JSON.stringify(overlays.map((r) => r.id)))
 
 const menuIds = menuItems.map((r) => r.id).sort()
 ok('menu ids are namespaced (no shipped-id reuse)',
@@ -514,7 +540,7 @@ ok('menu orders sit after the shipped archive row (400)',
 
 const everyComponent = entries
 ok('every registered entry carries a render function',
-  everyComponent.length === entries.length && entries.length === 5,
+  everyComponent.length === entries.length && entries.length === 7,
   entries.length + ' entries')
 
 // ---------------------------------------------------------------------------
@@ -1027,7 +1053,7 @@ const delCold = deleteEntry.component({
   useMenuOpenState: () => [false, () => {}],
 })
 ok('delete row appears immediately for a non-favourited session',
-  delCold !== null && delCold !== undefined && /永久删除/.test(textOf(delCold)),
+  delCold !== null && delCold !== undefined && /删除对话/.test(textOf(delCold)),
   delCold === null || delCold === undefined ? 'null' : JSON.stringify(textOf(delCold)).slice(0, 60))
 // Run the queued effects: this is what actually issues the `/archived` request
 // whose result the re-render below reads. Without it the component would sit on
@@ -1050,12 +1076,12 @@ const delWarm = deleteEntry.component({
 })
 for (const fn of effectQueue) { try { fn() } catch (e) {} }
 ok('delete row appears for an archived, unfavourited session',
-  delWarm !== null && delWarm !== undefined && /永久删除/.test(textOf(delWarm)),
+  delWarm !== null && delWarm !== undefined && /删除对话/.test(textOf(delWarm)),
   delWarm === null || delWarm === undefined ? 'null' : JSON.stringify(textOf(delWarm)).slice(0, 80))
 
 // Confirmation gate: the first render must NOT be the destructive action.
 ok('first render asks for confirmation rather than deleting',
-  /永久删除此对话/.test(textOf(delWarm)) && !/^确认删除$/.test(textOf(delWarm).trim()),
+  /删除对话/.test(textOf(delWarm)) && !/^确认删除$/.test(textOf(delWarm).trim()),
   textOf(delWarm).slice(0, 60))
 
 // No delete request is issued merely by rendering.
@@ -1416,10 +1442,55 @@ ok('humanDuration tolerates junk instead of printing NaN',
     !bundleSource.includes('清单为制表符分隔的文本'))
   ok('the export result is rendered inside the idle card',
     /key: "idle"[\s\S]{0,7000}?exportInfo === null/.test(bundleSource))
-  // The settings page is now four cards, down from five.
-  ok('the settings page renders four cards',
-    (bundleSource.match(/children\.push\(React\.createElement\("div", \{ key: "/g) ?? []).length === 4,
-    String((bundleSource.match(/children\.push\(React\.createElement\("div", \{ key: "/g) ?? []).length))
+  // The settings page's own cards. A bare COUNT over the whole bundle stopped
+  // being meaningful once 0.26.0 added a second component with its own pushed
+  // children, so this asserts the cards by name instead — that is what "the
+  // page has these cards" actually means. `head` is the title row, not a
+  // CARD_STYLE box, so it is matched on its own.
+  ok('the settings page renders its head row',
+    bundleSource.includes('key: "head", style: { display: "flex"'))
+  for (const key of ['idle', 'fav', 'del']) {
+    ok(`the settings page renders its ${key} card`,
+      bundleSource.includes(`key: "${key}", style: CARD_STYLE`))
+  }
+  // 🔴 The ungrouped card must be mounted AND must not be able to delete
+  // without an explicit confirm. Both halves are asserted: a card that renders
+  // but sends `confirm: true` unconditionally would be a one-click deleter.
+  ok('the ungrouped health card is mounted in the settings page',
+    bundleSource.includes('React.createElement(UngroupedCard, { key: "ungrouped" })'))
+  ok('the ungrouped card only confirms after a dry run',
+    bundleSource.includes('confirm: dryRun !== true') &&
+    bundleSource.includes('dryRun: dryRun === true'))
+  ok('the ungrouped card offers a read-only diagnosis first',
+    bundleSource.includes('api("/ungrouped-diagnose"') &&
+    bundleSource.includes('api("/ungrouped-cleanup"') &&
+    bundleSource.includes('api("/ungrouped-explain"'))
+  // The harness ships its own "复制 Session ID" row, which duplicates this
+  // plugin's "复制 ID + 路径". A slot cannot remove a sibling slot, so the row
+  // is hidden in the DOM. Both halves matter: the labels must be the exact
+  // shipped strings (a substring match would also hit our own row) and the
+  // WRAPPER must be the node hidden, or a blank line is left behind.
+  ok('the duplicate built-in "复制 Session ID" row is hidden',
+    bundleSource.includes('"复制 Session ID"') &&
+    bundleSource.includes('"Copy Session ID"') &&
+    bundleSource.includes('data-dsh-aff-hidden-official'))
+  ok('the hidden built-in row hides its wrapper, not just the button',
+    bundleSource.includes('var seat = btn.parentElement !== null ? btn.parentElement : btn'))
+  ok('the single-session delete row is labelled 删除对话',
+    bundleSource.includes('}, "删除对话");'))
+  // 🔴 A turn typed mid-answer is rendered with data-chat-flow-kind="steering",
+  // not "user" — both kinds share the same UserMessageNodeView. Matching only
+  // "user" silently drops every interjected message row, which is exactly the
+  // "the undo/edit/delete buttons disappeared" bug (0.28.2). The shared
+  // selector constant must cover both kinds, and nothing may fall back to a
+  // user-only lookup.
+  ok('the human-turn selector covers interjected (steering) messages too',
+    bundleSource.includes('const HUMAN_FLOW = \'[data-chat-flow-kind="user"][data-chat-turn], [data-chat-flow-kind="steering"][data-chat-turn]\''))
+  ok('the button scan resolves its owner through the shared selector',
+    bundleSource.includes('const owner = row.closest(HUMAN_FLOW)'))
+  ok('no turn lookup is still restricted to data-chat-flow-kind="user" alone',
+    !bundleSource.includes('closest(\'[data-chat-flow-kind="user"][data-chat-turn]\')') &&
+    !/querySelector\(`\[data-chat-flow-kind="user"\]\[data-chat-turn="\$\{[a-zA-Z.]+\}"\]`\)/.test(bundleSource))
   ok('the batch card is titled 超时批量归档',
     bundleSource.includes('"超时批量归档"') && !bundleSource.includes('"超时自动归档"'))
 }
@@ -1465,9 +1536,9 @@ ok('sessionDirNames covers a bare id without duplicating',
   JSON.stringify(host.__internals.sessionDirNames('aa11')) === JSON.stringify(['aa11']),
   JSON.stringify(host.__internals.sessionDirNames('aa11')))
 
-const winDir = projectDirName('C:\\Users\\Administrator\\Documents\\deepseekharness')
+const winDir = projectDirName('C:\\Users\\someone\\Documents\\sample-repo')
 ok('projectDirName encodes a Windows cwd',
-  winDir === '--C-Users-Administrator-Documents-deepseekharness--', winDir)
+  winDir === '--C-Users-someone-Documents-sample-repo--', winDir)
 
 // A drive letter followed by a separator must collapse to ONE dash. This is the
 // assertion that matters: the naive "replace each separator with a dash" rule

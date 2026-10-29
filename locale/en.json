@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Archive Favorites Forge",
-    "description": "Favourite DSH conversations, copy session id + transcript path, delete one permanently, batch-archive idle ones, filter the sidebar to favourites, and export the list as tab-separated txt — additive slot extensions that edit no official file."
+    "description": "Favourite DSH conversations, copy session id + transcript path, delete one permanently, batch-archive idle ones, filter the sidebar to favourites, and export the list as tab-separated txt — plus session management: edit and resend any user message, undo a whole turn, with every file the assistant touched snapshotted automatically and restored on rollback — plus one-click continuation: distil a long conversation into a requirement timeline and task progress brief, inherit its agent preset, and send it into a fresh window — plus an Ungrouped health check: a read-only diagnosis, a dry-run-first one-click cleanup, and a boot-time self-check that warns in the log. Additive slot extensions that edit no official file."
   }
 }

@@ -1,10 +1,11 @@
 # dsh-archive-favorites-forge
 
-**Favourites, copy id+path, per-session delete, idle batch archive and a
-favourites filter for DeepSeek Harness conversations** — additive slot
-extensions over the shipped archive feature. It edits **no official file**.
+**Favourites, copy id+path, per-session delete, idle batch archive, a favourites
+filter, and edit-resend / undo-turn with automatic file rollback for DeepSeek
+Harness conversations** — additive slot extensions over the shipped archive
+feature. It edits **no official file**.
 
-**给 DSH 的对话加上收藏、复制 ID+路径、单条删除、超时批量归档和收藏筛选 —— 全部挂在官方插槽上，不改官方一行代码。**
+**给 DSH 的对话加上收藏、复制 ID+路径、单条删除、超时批量归档、收藏筛选，以及「编辑重发 / 撤销整轮 + 文件自动快照回滚」 —— 全部挂在官方插槽上，不改官方一行代码。**
 
 [![npm](https://img.shields.io/badge/npm-dsh--archive--favorites--forge-cb3837?logo=npm)](https://www.npmjs.com/package/dsh-archive-favorites-forge)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -16,7 +17,7 @@ English | [简体中文](README.zh.md)
 
 ## Screenshots
 
-**1. The conversation menu** — favourite, copy id + path, and a guarded permanent delete, added as three rows to the shipped 「…」 menu:
+**1. The conversation menu** — four rows added to the shipped 「…」 menu: favourite, copy id + path, continue in a new window, and a guarded delete. The harness's own duplicate 「复制 Session ID」 row is hidden:
 
 ![Session menu](assets/01-session-menu.png)
 
@@ -28,6 +29,10 @@ English | [简体中文](README.zh.md)
 
 ![Settings panel](assets/03-settings-panel.png)
 
+**4. The per-turn buttons** — 复制 → ↺ undo → ✏️ edit-and-resend → 🗑 delete under every human message, including the messages you interject mid-turn:
+
+![Turn actions](assets/04-turn-actions.png)
+
 ---
 
 ## Why this exists
@@ -37,7 +42,9 @@ DSH already ships an archive feature: the Workspace registry keeps a global
 sidebar rows plus a view-options filter. That shipped feature has **no
 favourites, no per-conversation delete, no copy-id/path affordance, and no
 time-based batch archive** — and it deliberately refuses to open an archived
-conversation.
+conversation. The transcript has **no per-message edit or undo** either, and
+nothing in the harness rolls back the files an assistant turn rewrote. The
+sidebar's "Ungrouped" bucket has **no explanation and no repair entry point**.
 
 This plugin adds those things by attaching to documented official slot points,
 so it composes with the shipped UI instead of patching it.
@@ -54,14 +61,22 @@ so it composes with the shipped UI instead of patching it.
 | ⑥ | **收藏筛选**：视图选项菜单新增「仅显示收藏（已归档）」与「仅显示收藏（未归档）」 | **Favourites filter** — view-options rows for favourites that are archived, and favourites that are not |
 | ⑦ | **批量删除**：一键永久删除「已归档且未收藏」的对话 | **Batch delete** — permanently removes the archived-and-unfavourited conversations |
 | ⑧ | **删除护栏**：收藏项拒删、越出会话根目录拒删、符号链接拒删、逐条报告、批量上限 | **Delete guardrails** — favourites refused, paths outside the sessions root refused, symlinks refused, per-id reporting, batch cap |
+| ⑨ | **编辑重发**：任意一条用户消息下多一个 ✏️，点开就是内联编辑框（可拖入文件 / 粘贴图片，最多 10 个附件、单个 8MB），发送即截断到该消息之前并重发 | **Edit and resend** — a ✏️ under any user message opens an inline editor (drag files or paste images, 10 attachments max, 8 MB each); sending truncates the conversation to just before that message and resends |
+| ⑩ | **撤销整轮**：↺ 把对话回退到该轮之前，并**默认同时还原这一轮里被 AI 改过的文件**（确认框里列出将被回滚的路径，可取消勾选只回退对话） | **Undo a turn** — ↺ rewinds the conversation to before that turn and, by default, also **restores the files the assistant changed during it** (the confirm dialog lists the affected paths; untick to rewind the conversation only) |
+| ⑪ | **文件快照**：AI 每次改文件（`write` / `edit` / `str_replace_editor`）前自动留一份内容快照，撤销时按最早的改动记录还原；没有快照的老会话从日志反推 | **File snapshots** — every `write` / `edit` / `str_replace_editor` call snapshots the file's prior bytes first; undo restores from the earliest change after the boundary, and falls back to reconstructing from the transcript log for conversations that predate the plugin |
+| ⑫ | **未分组体检**：只读诊断侧栏「未分组」里到底有哪几条会话、每条为什么在那儿、该怎么处置；**先试算再执行**，删的一律进回收站 | **Ungrouped health check** — a read-only diagnosis of exactly which conversations sit in the sidebar's "Ungrouped" bucket, why each one is there, and what to do with it; a dry run comes first and deletes go to the recycle bin |
+| ⑬ | **未分组硬门**：插件每次启动 8 秒后自检一次，有游离会话就在日志里告警并指路体检卡片；干净则记一行 `clean` | **Ungrouped boot gate** — 8 seconds after every start the plugin re-checks; a non-empty bucket logs a warning naming the first ten ids, a clean one logs a single `clean` line |
+| ⑭ | **新窗口继续对话**：把长对话蒸馏成一份交接书（用户要求时间线 + 任务进度清单 + 团队任务 + 最近进展），先弹窗报告「检测到任务进行到 第 N 轮」，确认后新开一个 `新对话-<原名>`、**继承原对话的预设智慧体**并自动把交接书发过去 | **Continue in a new window** — distils a long conversation into a handover brief (requirement timeline, task progress, team tasks, latest progress), reports "you are N turns in" first, then on confirm opens `新对话-<original title>` with the **original agent preset inherited** and sends the brief as its first message |
 
 ### Where each feature lives
 
 | Feature | UI location |
 |---|---|
 | Favourite / copy / delete one conversation | Sidebar row 「…」 menu (and a hover ☆ on the row) |
-| Idle batch archive, export list, favourites list, batch delete | **Settings → 归档收藏** |
+| Idle batch archive, export list, favourites list, batch delete, **ungrouped health check** | **Settings → 归档收藏** |
 | Favourites filter | **视图选项 → 筛选会话** |
+| Edit-resend / undo turn / delete one message | The ↺ ✏️ 🗑 buttons under each **user** message in the transcript |
+| Undo and edit confirmation | A modal (`shell.overlay`) — the only place the plugin draws outside the sidebar |
 
 ## Install
 
@@ -77,27 +92,62 @@ startup — so a page refresh alone does **not** pick up a new version.
 
 ```
 lib/index.js    host half   — favourites store, transcript-path resolver,
-                              JSON routes, guarded delete, archive/dearchive
-lib/client.js   client half — official slot registrations + one DOM rule
+                              JSON routes, guarded delete, archive/dearchive,
+                              file snapshots + transcript-log parsing
+lib/client.js   client half — official slot registrations + two DOM rules
+                              (the favourites filter and the transcript buttons)
 ```
 
 **Slots used** (all documented in the harness client contract):
 
 | Slot | What it contributes |
 |---|---|
-| `sidebar.workspaces.session.menu.item` | 3 rows: favourite, copy id+path, delete |
+| `sidebar.workspaces.session.menu.item` | 4 rows: favourite, copy id+path, continue in a new window, delete |
 | `sidebar.workspaces.session.row.action` | 1 hover ☆ star |
 | `settings.section` | the 归档收藏 page |
+| `shell.overlay` | the one confirmation modal used by edit-resend and undo |
+
+**Host routes** (all under `/plugins/dsh-archive-favorites-forge`):
+
+| Route | Purpose |
+|---|---|
+| `GET /status` | version + state paths, for diagnostics |
+| `GET /favorites`, `POST /favorite` | the favourites set |
+| `GET /archived`, `POST /unarchive` | the archived set, and undo of one archive |
+| `GET\|POST /idle-archive` | preview and apply the idle batch archive |
+| `POST /export-list` | write the tab-separated list |
+| `POST /reveal` | open the file manager on a path |
+| `POST /session-info` | one session's title / workspace / transcript path |
+| `POST /delete` | guarded permanent delete (batch) |
+| `POST /session-turn-info` | one turn's user text, its file-change list, and the fork boundary |
+| `POST /session-files-restore` | roll back the files changed after a given sequence number |
+| `POST /session-replace` | retire the original conversation after a fork took its place |
+| `POST /session-digest` | read-only: distil a long conversation into a requirement-timeline + task-progress brief for a fresh window |
+| `POST /ungrouped-diagnose` | read-only health check: which conversations would land in "Ungrouped", why, and what to do |
+| `POST /ungrouped-cleanup` | one-click cleanup; **dry run unless `confirm: true`**, and it re-diagnoses before acting |
+| `POST /ungrouped-explain` | the prose answer to "why does Ungrouped exist, and is it from deleting conversations?" |
 
 Every contribution is registered through `ctx.slots.inject` — the "register once
 the owning entry is mounted" contract — so the plugin never assumes the sidebar
 is up, and never holds a reference to a node the host owns.
 
-The favourites filter is the one exception: the view-options menu is a plain
-array with **no slot and no trigger id**, so that single control is added by
-finding the official filter row in the DOM and cloning it. It keys on
-`role`/`aria`/`data-row-key` attributes, never on the CSS-module hashes (which
-are re-hashed on every build).
+Two DOM rules exist, both deliberate exceptions:
+
+- **The favourites filter.** The view-options menu is a plain array with **no
+  slot and no trigger id**, so that single control is added by finding the
+  official filter row in the DOM and cloning it.
+- **The transcript buttons.** The conversation transcript has no slot for
+  per-message actions either, so ↺ ✏️ 🗑 are appended after the official copy
+  button under each user message. The anchor is the single `[data-clock="start"]`
+  node per message, and the owner is its
+  `[data-chat-flow-kind="user"][data-chat-turn]` **or**
+  `[data-chat-flow-kind="steering"][data-chat-turn]` ancestor — the harness
+  labels a turn-opening question `user` and a mid-turn interjection `steering`,
+  and both share the same `UserMessageNodeView`, so matching `user` alone leaves
+  every interjected message without buttons (fixed in 0.28.2). Never a
+  CSS-module hash (those are re-hashed on every build).
+  A `MutationObserver` re-runs the scan, so messages that stream in later get
+  their buttons too.
 
 ### Why the favourites set lives in a file, not `localStorage`
 
@@ -129,12 +179,109 @@ successful delete the host emits `api-session/removed` — the harness's own
 row-removal event — so the sidebar drops the row immediately instead of showing
 it until the next reload.
 
+### Why edit and undo are "fork, then retire the original"
+
+There is no in-place "truncate this conversation" RPC either. The only official
+way to keep a prefix of a conversation is `sessions.fork({ sessionId, atSeq })`,
+which produces a **new** child conversation holding everything before `atSeq`.
+
+So both buttons do the same three-step dance:
+
+1. **Fork** the conversation at the boundary (for the first turn there is no
+   prefix to keep, so `sessions.create` opens a fresh conversation in the same
+   workspace instead);
+2. **Optionally roll the files back** — `POST /session-files-restore` restores
+   every file the assistant touched after that boundary;
+3. **Retire the original** via `POST /session-replace`, because the original is
+   now superseded by its own fork and leaving it around would double every row
+   in the sidebar.
+
+Step 3 is the one place where a **favourite** conversation may be deleted, and it
+is the reason `handleDelete` grew an explicit `replace` flag rather than the
+client simply calling `/delete`: a favourite means "keep this conversation", and
+the conversation being retired here is *the one the fork replaced*. Only the
+favourite guard is skipped. Every other guard — sessions-root containment, not
+the root itself, non-symlink, is-a-directory, and the EBUSY/EPERM retries — stays
+on, because a fork produces an ordinary session directory and none of those
+conditions have become safe. The flag is threaded as an explicit parameter on a
+**separate route**, so a `/delete` request body can never switch the guard off.
+
+`beforeSeq` (the fork boundary) is the sequence number of the event **immediately
+before** the turn's `turn/start`, not the `turn/start` itself. Forking inside the
+gap between `turn/start` and the first user message would leave an unclosed
+`turn/start` in the child, and the fork synthesises a completed-turn line to
+close it — a phantom empty turn.
+
+### Why the file snapshots are content-addressed
+
+Before each `write` / `edit` / `str_replace_editor` call the host copies the
+file's current bytes to
+
+```
+~/.dsh/sessions/<workspace-dir>/<session-dir>/history-file/blobs/<sha256>
+```
+
+and appends one line to `history-file/manifest.jsonl`:
+
+```json
+{"seq": 412, "turn": 7, "time": "...", "tool": "edit", "path": "C:\\...", "blob": "<sha256>"}
+```
+
+`blob: null` means the file did not exist at that moment, so restoring it means
+**deleting** it. Hashing the content means a file edited five times in one turn
+is stored once, and rolling back consumes the manifest entries it used (and the
+blobs they orphaned), so a rolled-back conversation does not keep growing.
+
+Snapshots are written **before** the tool runs, so the very first `write` to a
+brand-new file records "did not exist" rather than its post-write content.
+
+### Why there is a log-reverse fallback
+
+Conversations that predate this plugin have no manifest. For those, the host
+re-reads the transcript (`session[.vN].jsonl.zstd`, multi-frame zstd, header line
+dropped) and applies the inverse of each recorded tool call in reverse order:
+`edit` swaps `new_string` back to `old_string`, `str_replace_editor create`
+deletes the file, `str_replace` swaps `new_str` back to `old_str`, `insert`
+removes `new_str`.
+
+`write` cannot be inverted — a full overwrite leaves no trace of what was there —
+so a conversation whose only changes came from `write` gets a **warning** naming
+the file instead of a silent no-op. That warning is surfaced in the confirm
+dialog, which is why the file list is fetched *before* the dialog opens.
+
+### Why "Ungrouped" is not caused by deleting conversations
+
+The official sidebar's `sessionVisible()` runs four checks in order:
+
+```js
+if (session.origin === "subagent") return false           // 1. subagents out
+if (session.blank && session.id !== current) return false  // 2. other blanks out
+case "default": return !archived.has(session.id)           // 3. archived out
+// 4. only now: "is this session accounted for by a workspace?"
+```
+
+Step 3 returns `false` outright, so an archived id **never reaches** the `stray`
+branch that builds the bucket. The chain "delete a conversation → its id lingers
+in `archivedSessionIds` → an Ungrouped group appears" therefore does not exist in
+the code. Measured counter-evidence: this machine's `archivedSessionIds` holds
+**98 ids whose session directories no longer exist**, and the sidebar stayed clean
+throughout.
+
+The one real cause is: **a session was created but never accounted for by any
+workspace.** If `WorkspaceRegistry.create()` misses its `attachSession`, or the
+session's `cwd` points at a directory that was never registered as a workspace,
+it stays stray forever. A plugin cannot intercept the official create path, so
+the design is "warn once per boot" + "fix it in one click" — never a silent
+auto-delete.
+
 ## Configuration
 
 | Key | Default | Meaning |
 |---|---|---|
 | `enabled` | `true` | Master switch for the host routes |
 | `maxDeletePerCall` | `500` | Hard cap on one delete request |
+| `ungroupedCheck` | `true` | Boot-time Ungrouped self-check; `false` silences the warning (the health card still works) |
+| `ungroupedCheckDelayMs` | `8000` | How long after start the self-check runs, in ms |
 
 ```yaml
 - id: dsh-archive-favorites-forge
@@ -165,20 +312,124 @@ it until the next reload.
   folder. It mutates that registry only through the registry's **own**
   `archiveSession` / `unarchiveSession` methods, and never writes another
   plugin's internals.
+- **`新对话-<original title>` loses its last few characters when the original
+  title is long.** This is a shipped DSH ceiling, not a limit this plugin adds:
+  the `session-title` service sets `maxTitleBytes: 80`
+  (`@deepseek-ai/dsh-base/cordis.patch.yml`) and `rename()` truncates to 80
+  **UTF-8 bytes** (three bytes per CJK character, never splitting one). The
+  original title `DeepSeek 智能体团队任务：蒸馏消息回滚与侧边栏未分组排查` is
+  78 bytes; the 10-byte `新对话-` prefix pushes it to 88, so it is cut to 33
+  characters / 79 bytes. Scanning all 574 session titles in this install, the
+  longest is exactly 79 bytes — 80 is the global ceiling. The plugin passes the
+  title through verbatim and imposes no length of its own; raising the limit
+  means editing `session-title.config.maxTitleBytes` in the profile, which
+  affects every title in the install and needs a restart.
+
+### Limits of the file snapshots (read these before trusting a rollback)
+
+- **Only three tools are tracked**: `write`, `edit`, and `str_replace_editor`.
+  Anything else that touches a file — a shell/terminal command, a Python script
+  the assistant ran, a formatter, a `git checkout` — leaves **no snapshot and no
+  log record**, so undo cannot see it. If a turn edited files only through the
+  terminal, undo rewinds the conversation and leaves the files alone.
+- **Only absolute paths are recorded.** A relative path in a tool argument is
+  skipped, because resolving it against the right base directory is not knowable
+  from the transcript alone, and guessing wrong would snapshot or restore the
+  wrong file.
+- **A single file larger than 8 MB is skipped** (one blob per version, and the
+  cap keeps one long turn from filling the disk). The skip is logged; undo will
+  not restore that file.
+- **Rollback overwrites whatever is there now.** It restores the pre-turn bytes,
+  so edits you made by hand to the same file since then are lost. That is what
+  "undo" means here, but it is worth knowing before ticking the checkbox.
+- **The edit box is prefilled with the message text only.** Attachments that
+  were on the original message are **not** carried over — re-attach them if the
+  resend needs them. This is deliberate: attachment handles are session-scoped
+  and copying one into a new conversation would produce a dangling reference.
+- **Undo deletes the original conversation.** The rewind is implemented as
+  fork-and-retire, so the pre-undo conversation does not survive as a hidden
+  branch. Anything in it that you wanted to keep should be copied out first.
+- **Blank conversations are not affected** by any of this: they have no turns
+  and no tool calls.
+
+### Limits of the Ungrouped health check
+
+- **It treats the symptom, not the disease.** The plugin cannot intercept the
+  official create path that fails to register a session, so all it can do is tell
+  you which conversations are stray, why, and fix them in one click — plus warn
+  once per boot.
+- **Deletes always go to the recycle bin**
+  (`Microsoft.VisualBasic.FileIO.FileSystem.DeleteDirectory(..., 'SendToRecycleBin')`).
+  If the recycle-bin call fails it degrades to moving the directory into
+  `<dshHome>/sessions_quarantine_<stamp>/`; it never hard-deletes. You clean that
+  quarantine folder up yourself.
+- **The conversation you are currently in is never touched automatically** — it is
+  labelled "needs a human" and skipped.
+- **At most 50 items per run** (`maxItems`); the rest are reported as
+  `budget-exhausted` and a second click picks them up.
+- **The host re-diagnoses before acting.** What the page shows is a snapshot from
+  a few seconds ago, and a session may have been registered in the meantime, so
+  what actually runs is "still stray right now" — not the list the client sent.
+- **The check is cheap.** It decodes only the **first zstd frame** of each session
+  log to read the header (the four-step exclusion test needs nothing else), and
+  decodes full text only for the few sessions that actually land in the bucket.
+  Measured on this machine — 653 session directories, 746 MB of logs — **0.43 s**.
+  The first version decoded every frame of every log and took 12.6 s, blocking the
+  main thread long enough to look like a freeze.
 
 ## Development
 
 ```
-lib/index.js             host half
-lib/client.js            client half (a __ModuleLoader__ bundle)
-test/probe-client.mjs    DOM-stub + host probe suite
+lib/index.js                 host half
+lib/ungrouped-guard.js       self-contained Ungrouped diagnose/cleanup module
+lib/client.js                client half (a __ModuleLoader__ bundle)
+test/probe-client.mjs        DOM-stub probe of the client contract
+test/probe-filehistory.mjs   end-to-end probe of the snapshot/rollback bytes
+test/probe-ungrouped-guard.mjs isolated probe of the Ungrouped guard (fake home, 9 fixtures + perf contract)
+test/probe-digest.mjs        isolated probe of the handover brief (fake home, 18 events + a 60-requirement conversation)
 ```
 
-Run the suite:
+Run all four:
 
 ```sh
 node test/probe-client.mjs
+node test/probe-filehistory.mjs
+node test/probe-ungrouped-guard.mjs
+node test/probe-digest.mjs
 ```
+
+They answer different questions and neither substitutes for the other.
+`probe-client.mjs` runs the real bundle against a stubbed DOM and proves the
+client contract (which slots get registered, what each component renders, that
+the sidebar enhancer does not eat the sidebar). `probe-filehistory.mjs` builds a
+throwaway fake DSH home — a multi-frame zstd session log and real files on disk —
+and proves the one claim a contract test cannot: that undoing a turn actually
+puts the previous bytes back. It reproduces the real ordering (the `tool/call`
+event is published *before* the tool runs, so the snapshot must capture the
+pre-edit bytes), and it exercises the log-reverse fallback used for forked
+children, which inherit events without ever publishing `session/event`.
+
+Both suites write only inside `.probe-*` directories in this repo and delete
+them on the way out.
+
+`probe-ungrouped-guard.mjs` points `DSH_HOME` / `DSH_AFF_SESSIONS_ROOT` /
+`DSH_AFF_WORKSPACE_FILE` / `DSH_SESSION_ID` at a fake home and builds nine
+multi-frame zstd sessions covering every step of the four-check verdict, all five
+advice classes, two guards and the item budget. What it really proves is that a
+**dry run writes nothing**: with the default `dryRun`, the registry is never
+called, nothing is emitted, all nine directories are still on disk, and
+`workspace.json` is byte-identical.
+
+`probe-digest.mjs` builds a log shaped like a real conversation — reasoning
+blocks, `tool/call`, `tool/result`, a **steering injection**, two `todo/write`
+snapshots and two revisions of the same `team/task` — and proves the brief's two
+core promises: **every real requirement is on the timeline**, and **the newest
+task snapshot wins and is named as the place to resume**. It also proves what must
+be dropped (reasoning, tool arguments and tool results never reach the text),
+that a steering injection is not counted as a requirement, that a 60-requirement
+conversation is thinned in the **middle** rather than truncated at the tail, and
+that the client creates the new session only inside `onConfirm` — reading the
+brief must never leave a stray empty conversation behind.
 
 The probe is not a formality — it has repeatedly caught bugs that a syntax
 check and a careful read both passed, including:
