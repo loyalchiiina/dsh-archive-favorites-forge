@@ -4,6 +4,47 @@ All notable changes to this project are documented here.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 this project uses [Semantic Versioning](https://semver.org/).
 
+## 0.28.8 — 2026-10-30
+
+### 修复：空白会话被误报成「未分组」
+
+0.28.7 重启后开机自检报了一条：
+
+```
+⚠ 1 session(s) will appear under 未分组 in the sidebar (session-02c86ef3-…)
+```
+
+查下去发现**侧栏根本没画它**，是我们报错了。那条会话 432 字节、5 个事件
+（header + permission/preset + sandbox/mode + approval/policy + session/end-seed）、
+零条用户消息 —— 是一个刚建好还没说过话的空白会话。
+
+根因：官方的 `sessionVisible()` 用 `session.blank` 排除空白会话，但 **`blank` 不是
+header 字段**。harness 把它写在投影缓存里：
+
+```
+storages/session_projcache/sessions/<裸uuid>.json
+  → record.rows.sessionListMetadata.val.blank = true
+```
+
+guard 只读 header 的 `blank`，所以这种会话在 header 看来完全正常，又不在任何
+`workspace.sessionIds` 里 → 被判成游离会话。**报的是假警，而且会让人以为未分组
+又复发了。**
+
+修法：在「通过四步排除、即将进入未分组」这一步，额外查一次投影缓存的
+`sessionListMetadata.blank`（`readCacheBlank()`，两种文件名拼写都试）。
+- 只在候选这一步查 —— 正常成员一次额外 I/O 都不付。
+- 读到 `null`（缓存不存在/读不出）时保持「不知道」，不隐藏、不猜。
+- 明确 `blank:false` 的会话照常报告并给出真实建议。
+
+guard 版本 1.1.0 → **1.2.0**。
+
+测试：`probe-ungrouped-guard.mjs` 新增第 12 节 7 条断言 —— header 里确实没有 blank
+标记、`readCacheBlank` 能在裸 uuid 拼写下找到它、没有缓存时返回 `null` 而不是 `false`、
+该会话不再出现在未分组里而是计入 `blankCount`、以及反向用例（`blank:false` 的会话
+必须照常报告并拿到 `attach` 建议，不能被静默丢掉）。79 → **86** 条。
+
+四套探针合计 client 204 + filehistory 39 + ungrouped-guard 86 + digest 58 = **387 条全绿**。
+
 ## 0.28.7 — 2026-10-30
 
 ### 修复：删除对话现在会一并删掉它的投影缓存

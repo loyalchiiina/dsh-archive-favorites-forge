@@ -598,6 +598,90 @@ ok('maxItems caps the ghost plan',
   brief({ deleted: ghostBudget.deleted, skipped: ghostBudget.skipped }))
 
 // ---------------------------------------------------------------------------
+// 12. A blank session keeps its flag in the CACHE, not the header
+// ---------------------------------------------------------------------------
+//
+// 🔴 REAL BUG THIS PINS. `sessionVisible()` excludes `blank` sessions, but `blank`
+// is not a header field — the harness writes it to the projection cache as
+// `record.rows.sessionListMetadata.val.blank`. A guard that only reads the header
+// therefore sees a freshly created, never-used session as a perfectly ordinary one,
+// finds it in nobody's `sessionIds`, and reports it under "未分组" — while the
+// sidebar never draws it. That was a false alarm on a real boot log
+// (session-02c86ef3-…, 432 bytes, 5 events: header + permission preset + sandbox
+// mode + approval policy + end-seed, zero user messages).
+//
+// The fixture deliberately splits the two spellings: the log directory is
+// `session-<uuid>` and the cache file is the bare uuid, which is how this machine
+// actually stores them after a cross-generation upgrade.
+
+console.log('\n=== blank lives in the cache, not the header ===\n')
+
+const BLANK_CACHE_ID = 'session-probe-blankcache-0014'
+const BLANK_CACHE_BARE = 'probe-blankcache-0014'
+
+created.blankCache = writeLog(PROJ_WS, BLANK_CACHE_ID, [
+  header(BLANK_CACHE_ID, { cwd: WS_PATH }),
+  ev('permission/preset', { preset: 'danger-full-access' }),
+  ev('sandbox/mode', { mode: 'danger-full-access' }),
+  ev('approval/policy', { policy: 'never' }),
+  ev('session/end-seed', {}),
+])
+// No blank flag anywhere in the header — that is the whole point.
+ok('the fixture header carries no blank flag',
+  !JSON.stringify(created.blankCache.buf).includes('blank'))
+
+writeFileSync(join(projCacheRoot, BLANK_CACHE_BARE + '.json'), JSON.stringify({
+  version: 7,
+  record: {
+    identity: { formatVersion: 4, createdAt: CREATED_AT, cwd: WS_PATH, isSeeded: false, inheritedEventCount: 0 },
+    rows: {
+      title: { val: '' },
+      sessionListMetadata: { val: { blank: true, lastPromptAt: null } },
+      turnOutline: { val: { turns: [] } },
+    },
+  },
+}), 'utf8')
+
+ok('readCacheBlank finds the flag under the bare-uuid spelling',
+  __internals.readCacheBlank(__internals.resolveEnv({}), BLANK_CACHE_ID) === true,
+  String(__internals.readCacheBlank(__internals.resolveEnv({}), BLANK_CACHE_ID)))
+ok('readCacheBlank reports null (not false) when there is no cache file',
+  __internals.readCacheBlank(__internals.resolveEnv({}), 'session-probe-nocache-9999') === null)
+
+const blankCacheDiag = await diagnoseUngrouped(null)
+ok('a header-only blank check would have called it ungrouped — the cache saves it',
+  !blankCacheDiag.ungrouped.some((row) => row.sessionId === BLANK_CACHE_ID),
+  brief(blankCacheDiag.ungrouped.map((row) => row.sessionId)))
+ok('it is counted as blank instead of as a stray',
+  blankCacheDiag.summary.blankCount >= 2, brief(blankCacheDiag.summary))
+
+// The other half of the contract: a cache that says blank:false must NOT be hidden.
+const LIVE_CACHE_ID = 'session-probe-livecache-0015'
+created.liveCache = writeLog(PROJ_WS, LIVE_CACHE_ID, [
+  header(LIVE_CACHE_ID, { cwd: WS_PATH }),
+  ev('user/message', { source: { kind: 'user' }, content: [{ type: 'text', text: 'real question' }] }),
+])
+writeFileSync(join(projCacheRoot, LIVE_CACHE_ID + '.json'), JSON.stringify({
+  version: 7,
+  record: {
+    identity: { formatVersion: 4, createdAt: CREATED_AT, cwd: WS_PATH, isSeeded: false, inheritedEventCount: 2 },
+    rows: {
+      title: { val: '真实会话' },
+      sessionListMetadata: { val: { blank: false, lastPromptAt: CREATED_AT + 500 } },
+      turnOutline: { val: { turns: [{ turn: 1, seq: 4, prompt: 'real question', response: 'answer' }] } },
+    },
+  },
+}), 'utf8')
+
+const liveCacheDiag = await diagnoseUngrouped(null)
+ok('a cache saying blank:false does not hide the session',
+  liveCacheDiag.ungrouped.some((row) => row.sessionId === LIVE_CACHE_ID),
+  brief(liveCacheDiag.ungrouped.map((row) => row.sessionId)))
+ok('that session still gets a real advice, not a silent drop',
+  liveCacheDiag.ungrouped.find((row) => row.sessionId === LIVE_CACHE_ID)?.advise === 'attach',
+  brief(liveCacheDiag.ungrouped.map((row) => [row.sessionId, row.advise])))
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 

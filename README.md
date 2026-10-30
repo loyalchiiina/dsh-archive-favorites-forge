@@ -404,6 +404,14 @@ scans directories and reports 0, the boot gate reads the registry and reports
 Measured on this machine: 984 cache files vs 657 session directories →
 **364 ghosts, 9.77 MB**, of which the oldest 318 are more than a week old.
 
+There is also a **false-alarm class** worth knowing about: a freshly created
+session that has never been used carries **no `blank` flag in its header** — the
+harness writes `sessionListMetadata.blank` into the projection cache instead. A
+header-only check reports such a session as a stray under "Ungrouped" while the
+sidebar never draws it. The health check now consults the cache as well, excludes
+the row when `blank: true` (matching the official rule), and treats an unreadable
+or missing cache as "unknown" rather than guessing.
+
 The 「缓存幽灵」 section under the health card:
 
 - **Scan** lists orphan cache records read-only (count, size, title, id); pinned
@@ -460,7 +468,7 @@ lib/ungrouped-guard.js       self-contained Ungrouped diagnose/cleanup module
 lib/client.js                client half (a __ModuleLoader__ bundle)
 test/probe-client.mjs        DOM-stub probe of the client contract
 test/probe-filehistory.mjs   end-to-end probe of the snapshot/rollback bytes
-test/probe-ungrouped-guard.mjs isolated probe of the Ungrouped guard + ghost cache (fake home, 9 session fixtures + 4 cache fixtures + perf contract)
+test/probe-ungrouped-guard.mjs isolated probe of the Ungrouped guard + ghost cache + blank-session detection (fake home, 11 session fixtures + 6 cache fixtures + perf contract)
 test/probe-digest.mjs        isolated probe of the handover brief (fake home, 18 events + a 60-requirement conversation)
 ```
 

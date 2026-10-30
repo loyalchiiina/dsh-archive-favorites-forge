@@ -339,6 +339,11 @@ sessions/<id>.json` **不会跟着删**。那份缓存里完整存着标题、to
 `clean`，侧栏却明明画着。两者都看不见缓存幽灵。本机实测：缓存 984 份 vs 目录 657 个
 → **幽灵 364 条、9.77 MB**，其中最老的 318 条已在 7 天以上。
 
+还有一类**假警**要注意：刚建好、还没说过话的空白会话，header 里**没有** `blank` 标记
+（官方把 `sessionListMetadata.blank` 写在投影缓存里）。只读 header 就会把它当成
+游离会话报进未分组，而侧栏其实不会画它。体检已经会额外查一次缓存，看到
+`blank: true` 就按官方口径排除；读到 `null`（缓存不存在）时保持「不知道」，不隐藏也不猜。
+
 卡片下方「缓存幽灵」小节：
 
 - **扫描**：只读列出孤儿缓存（条数、占用、标题、id），置顶项标「置顶，保留」。
@@ -381,7 +386,7 @@ lib/ungrouped-guard.js       未分组体检/清理的自包含模块（可单�
 lib/client.js                客户端半边（__ModuleLoader__ bundle）
 test/probe-client.mjs        客户端契约的 DOM stub 探针
 test/probe-filehistory.mjs   文件快照/回滚字节的端到端探针
-test/probe-ungrouped-guard.mjs 未分组体检/清理 + 缓存幽灵的隔离探针（假 home，9 条会话夹具 + 4 份缓存夹具 + 性能契约）
+test/probe-ungrouped-guard.mjs 未分组体检/清理 + 缓存幽灵 + 空白会话判定的隔离探针（假 home，11 条会话夹具 + 6 份缓存夹具 + 性能契约）
 test/probe-digest.mjs        交接书蒸馏的隔离探针（假 home，18 条事件 + 60 条要求的长对话）
 ```
 
