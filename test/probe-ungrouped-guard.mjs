@@ -272,7 +272,10 @@ ok('the cheap header read still yields id/cwd/origin',
 // The header read must also be right when a frame boundary lands mid-line
 // (hand-made fixtures do that, DSH itself does not): fall back to full decode
 // rather than reporting bad-header.
-const midLineDir = join(PROJ_STRAY, 'session-probe-midline-0010')
+// NOTE: must go through dirOf() so it lands in the isolated fake home. Joining the
+// project name by hand resolves against the *current working directory* and litters
+// an empty `--C-Probe-Stray--/` folder in the repo root on every run.
+const midLineDir = dirOf(PROJ_STRAY, 'session-probe-midline-0010')
 mkdirSync(midLineDir, { recursive: true })
 {
   const body = [
