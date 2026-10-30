@@ -66,7 +66,9 @@ so it composes with the shipped UI instead of patching it.
 | ⑪ | **文件快照**：AI 每次改文件（`write` / `edit` / `str_replace_editor`）前自动留一份内容快照，撤销时按最早的改动记录还原；没有快照的老会话从日志反推 | **File snapshots** — every `write` / `edit` / `str_replace_editor` call snapshots the file's prior bytes first; undo restores from the earliest change after the boundary, and falls back to reconstructing from the transcript log for conversations that predate the plugin |
 | ⑫ | **未分组体检**：只读诊断侧栏「未分组」里到底有哪几条会话、每条为什么在那儿、该怎么处置；**先试算再执行**，删的一律进回收站 | **Ungrouped health check** — a read-only diagnosis of exactly which conversations sit in the sidebar's "Ungrouped" bucket, why each one is there, and what to do with it; a dry run comes first and deletes go to the recycle bin |
 | ⑬ | **未分组硬门**：插件每次启动 8 秒后自检一次，有游离会话就在日志里告警并指路体检卡片；干净则记一行 `clean` | **Ungrouped boot gate** — 8 seconds after every start the plugin re-checks; a non-empty bucket logs a warning naming the first ten ids, a clean one logs a single `clean` line |
-| ⑭ | **新窗口继续对话**：把长对话蒸馏成一份交接书（用户要求时间线 + 任务进度清单 + 团队任务 + 最近进展），先弹窗报告「检测到任务进行到 第 N 轮」，确认后新开一个 `新对话-<原名>`、**继承原对话的预设智慧体**并自动把交接书发过去 | **Continue in a new window** — distils a long conversation into a handover brief (requirement timeline, task progress, team tasks, latest progress), reports "you are N turns in" first, then on confirm opens `新对话-<original title>` with the **original agent preset inherited** and sends the brief as its first message |
+| ⑭ | **缓存幽灵清理**：清掉「会话目录已不在、但投影缓存还留着」的孤儿记录——这是「未分组」清完又冒出来的真正原因，目录扫描看不见它 | **Ghost-cache sweep** — removes orphan projection records whose session directory is long gone; this is why the bucket keeps reappearing and no directory scan can see it |
+| ⑮ | **隐藏「未分组」分组**：一个纯视图开关（**默认开启**），把侧栏底部那个分组（连组头）整体藏起来，不删任何对话 | **Hide the "Ungrouped" group** — a pure view switch (**on by default**) that hides the whole bucket (header and rows) from the sidebar; nothing is deleted |
+| ⑯ | **新窗口继续对话**：把长对话蒸馏成一份交接书（用户要求时间线 + 任务进度清单 + 团队任务 + 最近进展），先弹窗报告「检测到任务进行到 第 N 轮」，确认后新开一个 `新对话-<原名>`、**继承原对话的预设智慧体**并自动把交接书发过去 | **Continue in a new window** — distils a long conversation into a handover brief (requirement timeline, task progress, team tasks, latest progress), reports "you are N turns in" first, then on confirm opens `新对话-<original title>` with the **original agent preset inherited** and sends the brief as its first message |
 
 ### Where each feature lives
 
@@ -126,6 +128,8 @@ lib/client.js   client half — official slot registrations + two DOM rules
 | `POST /ungrouped-diagnose` | read-only health check: which conversations would land in "Ungrouped", why, and what to do |
 | `POST /ungrouped-cleanup` | one-click cleanup; **dry run unless `confirm: true`**, and it re-diagnoses before acting |
 | `POST /ungrouped-explain` | the prose answer to "why does Ungrouped exist, and is it from deleting conversations?" |
+| `GET\|POST /ghost-cache-diagnose` | read-only: orphan projection-cache records whose session directory is gone |
+| `POST /ghost-cache-clean` | recycle orphan cache files; **dry run unless `confirm: true`**, re-scans first, pinned records kept by default |
 
 Every contribution is registered through `ctx.slots.inject` — the "register once
 the owning entry is mounted" contract — so the plugin never assumes the sidebar
@@ -376,6 +380,77 @@ auto-delete.
   Measured on this machine — 653 session directories, 746 MB of logs — **0.43 s**.
   The first version decoded every frame of every log and took 12.6 s, blocking the
   main thread long enough to look like a freeze.
+- **One kind of entry is invisible to the check.** Records that exist only in the
+  projection cache (`~/.dsh/storages/session_projcache/sessions/<id>.json`) whose
+  session directory is long gone. The check scans directories and the boot gate
+  reads the registry, so both report `clean` while the sidebar still draws the
+  bucket. Those are handled by the **ghost cache** section below.
+
+### Ghost cache (orphan projection records)
+
+This is the real reason the bucket keeps coming back, and it deserves its own
+paragraph.
+
+When a session directory `~/.dsh/sessions/<workspace>/<id>/` is deleted,
+`storages/session_projcache/sessions/<id>.json` **is not deleted with it**. That
+file still holds the title, token usage, context pressure, turn outline and model
+selection, so the running sidebar happily draws the row (drawing a title needs no
+directory) — and the id is in nobody's `sessionIds`, so it lands in the stray
+branch and shows up under "Ungrouped".
+
+**Which produces the contradiction you have probably seen**: `check-ungrouped.js`
+scans directories and reports 0, the boot gate reads the registry and reports
+`clean`, yet the sidebar clearly draws the group. Neither can see cache ghosts.
+Measured on this machine: 984 cache files vs 657 session directories →
+**364 ghosts, 9.77 MB**, of which the oldest 318 are more than a week old.
+
+The 「缓存幽灵」 section under the health card:
+
+- **Scan** lists orphan cache records read-only (count, size, title, id); pinned
+  ones are labelled "置顶，保留".
+- **Two-stage**: "试算（不修改任何文件）" first, then a red "确认清理" box.
+- **Goes to the recycle bin** (`DeleteFile`, recoverable); on failure it degrades
+  to `<dshHome>/projcache_quarantine_<stamp>/`.
+- **Pinned and archived records are skipped by default** (both labelled
+  "保留"); sweeping them needs an explicit `includePinned: true` /
+  `includeArchived: true`. Archived rows are already filtered out of the sidebar
+  before they get there, so sweeping them only saves disk, not symptoms.
+- **Deletes no conversation** — the directory is already gone, so there is no
+  conversation left to delete.
+- **The host re-scans before acting** and only removes what is *still* a ghost;
+  the list the client submitted is not trusted.
+- The boot gate now runs twice: the Ungrouped check, then immediately a ghost
+  scan — which **only warns about the sweepable part** and drops to a one-line
+  info when every ghost is a pinned/archived keeper (otherwise it would shout on
+  every boot about rows it is designed never to touch).
+- **Deleting a conversation now drops its projection cache too** (0.28.7). A
+  session is two halves: the directory and the cache file. Older builds deleted
+  only the directory, so every delete left a ghost behind — that is the mechanism
+  behind "it comes back after you clean it". `handleDelete` now removes
+  `<id>.json` right after the directory (trying both the bare uuid and the
+  `session-<uuid>` spelling); a failure is logged as a warning and never blocks
+  the delete.
+
+### Hiding the "Ungrouped" group
+
+The 「未分组体检」 card in Settings has one checkbox:
+**「在侧栏隐藏「未分组」分组（连同组头一起隐藏，不删除任何对话）」**.
+
+- **On by default.** An unset preference means hidden; only an explicit `"0"`
+  brings the group back. It is the sidebar's ownerless fallback bucket, nobody
+  asked for it, and every entry in it is reachable through the health card.
+- **Pure view switch.** No host route, no `workspace.json` write, no session
+  directory or cache file touched; untick and it is back instantly.
+- **Cannot hit a real workspace.** The official group header carries
+  `data-row-key="workspace:<key>"` and the ungrouped bucket's key is the empty
+  string, so the selector can only ever match that ownerless bucket.
+- **Hides the container, not the header.** The official structure is
+  `div.groupSection > [header, div[role=group]]`; hiding only the header would
+  leave its rows orphaned under the previous group. The plugin marks the header's
+  `parentElement` and hides the whole block.
+- **Survives restarts** (`localStorage['dsh-aff-hide-ungrouped']`), and the gate
+  attribute is removed when the plugin is disabled — so the group always comes
+  back rather than staying hidden with no UI left to undo it.
 
 ## Development
 
@@ -385,7 +460,7 @@ lib/ungrouped-guard.js       self-contained Ungrouped diagnose/cleanup module
 lib/client.js                client half (a __ModuleLoader__ bundle)
 test/probe-client.mjs        DOM-stub probe of the client contract
 test/probe-filehistory.mjs   end-to-end probe of the snapshot/rollback bytes
-test/probe-ungrouped-guard.mjs isolated probe of the Ungrouped guard (fake home, 9 fixtures + perf contract)
+test/probe-ungrouped-guard.mjs isolated probe of the Ungrouped guard + ghost cache (fake home, 9 session fixtures + 4 cache fixtures + perf contract)
 test/probe-digest.mjs        isolated probe of the handover brief (fake home, 18 events + a 60-requirement conversation)
 ```
 
@@ -419,6 +494,18 @@ advice classes, two guards and the item budget. What it really proves is that a
 **dry run writes nothing**: with the default `dryRun`, the registry is never
 called, nothing is emitted, all nine directories are still on disk, and
 `workspace.json` is byte-identical.
+
+It also covers the **ghost-cache** half: four projection-cache fixtures — one whose
+session directory **is still on disk**, one plain ghost, one pinned ghost and one
+archived ghost — assert that a session with a directory is never called a ghost,
+that exactly the three orphans are picked out, that a plain ghost is advised
+`delete` while pinned and archived ones are advised `keep`, that a dry run touches
+neither the cache files nor `workspace.json`, that `includePinned: true` is the only
+way a pinned ghost enters the plan, that `includeArchived: true` is likewise the only
+way an archived ghost does, that a path outside the cache root is refused,
+that an entry with no `file` is skipped rather than deleted, and that `maxItems`
+caps the plan. The two halves together are the whole answer: when the directory scan
+says `clean`, the cache scan is what can still tell the truth.
 
 `probe-digest.mjs` builds a log shaped like a real conversation — reasoning
 blocks, `tool/call`, `tool/result`, a **steering injection**, two `todo/write`

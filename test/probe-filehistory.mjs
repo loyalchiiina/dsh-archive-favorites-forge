@@ -281,6 +281,29 @@ const replaced = await host.__internals.handleDelete({ sessionIds: [sessionId] }
 ok('replace mode does remove the favourited session', replaced.deleted.includes(sessionId), JSON.stringify(replaced))
 ok('replace mode really removed the directory', !existsSync(sessionDir), sessionDir)
 
+// 🔴 Deleting a session must ALSO drop its projection cache, or the next boot
+// still knows the conversation existed and renders it under 未分组 as a row with
+// no directory — the phantom that no directory scan can find. Every delete used
+// to manufacture one of those, which is why the bucket kept coming back.
+{
+  const ghostId = 'session-probe-ghost-del-0021'
+  const ghostDir = join(sessions, projectDirName(cwd), bareId(ghostId))
+  mkdirSync(ghostDir, { recursive: true })
+  const ghostHeader = JSON.stringify({ sessionId: ghostId, cwd, version: 4 }) + '\n'
+  writeFileSync(join(ghostDir, 'session.v4.jsonl.zstd'), zlib.zstdCompressSync(Buffer.from(ghostHeader, 'utf8')))
+  const cacheFile = join(host.__internals.projCacheRoot(), bareId(ghostId) + '.json')
+  mkdirSync(dirname(cacheFile), { recursive: true })
+  writeFileSync(cacheFile, JSON.stringify({ version: 7, record: { identity: { formatVersion: 4, createdAt: 1, cwd }, rows: {} } }))
+  ok('the fixture cache file exists before the delete', existsSync(cacheFile), cacheFile)
+
+  const dropped = await host.__internals.handleDelete({ sessionIds: [ghostId] }, undefined, {})
+  ok('a plain delete removes the session directory', !existsSync(ghostDir), ghostDir)
+  ok('a plain delete also removes the projection cache file', !existsSync(cacheFile), cacheFile)
+  ok('the delete reports success for the ghost fixture', dropped.deleted.includes(ghostId), JSON.stringify(dropped))
+}
+ok('dropProjectionCache is exported for probes', typeof host.__internals.dropProjectionCache === 'function')
+ok('projCacheRoot is exported for probes', typeof host.__internals.projCacheRoot === 'function')
+
 // ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------

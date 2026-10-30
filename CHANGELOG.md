@@ -4,6 +4,175 @@ All notable changes to this project are documented here.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 this project uses [Semantic Versioning](https://semver.org/).
 
+## 0.28.7 — 2026-10-30
+
+### 修复：删除对话现在会一并删掉它的投影缓存
+
+0.28.5 只是**事后清扫**幽灵，没堵住制造幽灵的那个口子。真机首启告警从 86 降到 1，
+剩下那 1 条是 4 小时前刚产生的（`USB 创建方法`，6254 B，无目录）——顺着它查到了源头：
+
+**我们自己的「删除对话」只删了会话目录，没删投影缓存。**
+
+一个会话是两半组成的：磁盘上的 `sessions/<project>/<id>/`，和
+`storages/session_projcache/sessions/<id>.json`。旧实现只删前者，于是下一次开机
+运行实例仍然知道这个对话存在（有标题、有 token 数、有对话摘要），但目录已经没了
+——它被渲染成「未分组」里一条打不开的行，而且任何目录扫描都找不到它，因为根本没有目录。
+**每删一次对话就制造一个幽灵**，这就是「清完又冒出来」的真正机制。
+
+修法：`handleDelete` 删除成功后调用新增的 `dropProjectionCache(sessionId)`，
+同时尝试裸 uuid 与 `session-<uuid>` 两种文件名（跨代升级的机器两种拼写并存）。
+纯 best-effort，失败只 warn、不中断删除。
+
+测试：`probe-filehistory.mjs` 新增 5 条断言 —— 夹具先造一个「目录 + 缓存文件」都在的会话，
+删完之后目录与缓存文件都必须不存在，且 `projCacheRoot` / `dropProjectionCache` 已导出。
+33 → **39** 条。四套探针合计 client 204 + filehistory 39 + ungrouped-guard 79 + digest 58
+= **380 条全绿**。
+
+兼容性：新增 `projCacheRoot` / `dropProjectionCache` 两个导出供探针白盒验证，
+`__internals` 37 → **39**；无新路由、无新配置项、无新 UI。
+
+## 0.28.6 — 2026-10-30
+
+### 修复：开机告警不再为「按设计保留」的幽灵刷屏
+
+0.28.5 上线后第一次真机启动就暴露了一个自己埋的坑：开机硬门报
+
+```
+⚠ 86 projection-cache ghost(s) with no session directory (4240793 bytes)
+```
+
+可那 86 条正是**置顶 1 条 + 已归档 85 条** —— 清理逻辑按设计永远不会动它们。
+于是这条告警会每次开机都刷一遍，而用户打开面板也清不掉，属于「不可行动的数字」。
+
+修法：开机硬门改为只统计**可清理**的幽灵（`advise === 'delete'`），字节数也只累加这一部分；
+当可清理数为 0 时降级为 info，并附上保留条数：
+
+```
+ghost-cache guard — clean (706 cache files vs 671 session dirs, 86 kept as pinned/archived)
+```
+
+这样告警重新变成「真有事才响」，保留项只在 clean 行里作为说明出现。
+
+测试：四套探针仍全绿（client 204/0、filehistory 33/0、ungrouped-guard 79/0、digest 58/0）。
+兼容性：只改开机告警的统计口径，路由、返回结构、`__internals`（37）均未变。
+
+## 0.28.5 — 2026-10-30
+
+### 根治：清掉投影缓存幽灵，并让「未分组」默认隐藏
+
+0.28.4 只给了个视图开关，没有解决**为什么清完还会再冒出来**。这一版补上真正的
+那一半。
+
+**先说结论**：侧栏那个「未分组」分组里，有一类条目**磁盘上根本不存在**。
+
+- 会话目录 `~/.dsh/sessions/<workspace>/<id>/` 早就没了；
+- 但 `~/.dsh/storages/session_projcache/sessions/<id>.json` 还在，里面完整存着
+  标题、token 用量、上下文压力、对话摘要、模型选择等 28 个投影；
+- 运行中的侧栏照样把它画出来（它读的是缓存里的标题，不需要目录），而它不在任何
+  工作区的 `sessionIds` 里，于是落进 stray 分支 → 显示在「未分组」下。
+
+**这解释了一个长期矛盾**：`check-ungrouped.js` 扫目录报 `0 条`，插件 guard 读
+registry 也报 `clean`，侧栏却明明画着。两者都只看「磁盘 / 注册表」，看不见缓存幽灵。
+
+**本机实测数据**：缓存文件 984 份 vs 会话目录 657 个 → **幽灵 364 条，共 9.77 MB**。
+其中置顶 1 条、已归档 85 条。年龄分布：6–24 小时 14 条、1–7 天 32 条、7 天以上 318 条。
+最老的一批正是当初「删了会话、缓存没跟着删」的残留——包括 0.28.1 那次我们送进
+回收站的 3 个空对话，它们**至今仍在幽灵列表里**，这就是「清完又冒出来」的机制。
+
+**首次清理结果（本机，经用户批准）**：278 条送回收站、**0 失败**、释放 5.28 MB；
+缓存文件 984 → 706，剩余 86 条全是置顶 1 + 已归档 85（按默认策略保留）。
+侧栏那三条 `1+1` 与 `Session title: "1+1"` 的缓存文件已确认不存在。
+
+**新增：缓存幽灵检测与一键清理**（设置 → 归档收藏 → 未分组体检 → 「缓存幽灵」）
+
+- 「扫描」只读列出孤儿缓存：条数、占用、标题、id，置顶项标注「置顶，保留」。
+- 两段式执行：先「试算（不修改任何文件）」→ 再红框「确认清理」。
+- 真删走 **Windows 回收站**（`DeleteFile`，可恢复），失败降级到
+  `<dshHome>/projcache_quarantine_<stamp>/`。
+- **默认跳过置顶项与已归档项**（`includePinned` / `includeArchived` 都默认 false）——
+  与诊断给出的「保留」建议保持一致，避免出现「列表写着保留、点确认却删了」这种自相矛盾。
+  归档项本来就先被 archived 过滤挡在侧栏之外，清它只省空间、不治症状。
+- 清理**不会删除任何对话**——目录都不存在了，本来就没有对话可删。
+
+**新增：开机硬门扩成两道**。原来只在启动 8 秒后跑一次未分组体检；现在紧接着再跑
+一次缓存幽灵扫描：有幽灵就 `logger.warn` 报条数/字节并指向设置页，干净就
+`logger.info` 打一行 `ghost-cache guard — clean (N cache files vs M session dirs)`。
+
+**变更：「隐藏未分组」默认开启**。0.28.4 需要手动勾选；现在**未设置即为隐藏**，
+只有显式写入 `"0"` 才显示。理由：这个分组是官方 UI 里没有主人的兜底桶，用户从没
+要求过它，而里面每一条都能从体检卡片里查到并处理。
+
+**实现**：
+
+- `lib/ungrouped-guard.js` 版本 **1.0.0 → 1.1.0**，新增
+  `diagnoseGhostCache(ctx, options)` / `cleanupGhostCache(ctx, plan, options)`，
+  另抽出 `listSessionDirs` / `readCacheIdentity` / `sendFileToRecycleBin` 三个辅助
+  （`readMembership` 也补了 `pinned` 集合）。
+- 宿主 `lib/index.js` 新增两条路由 `GET|POST /ghost-cache-diagnose` 与
+  `POST /ghost-cache-clean`。后者**不信客户端的 id 列表**：先自己重新诊断一遍，
+  再把请求里「已经不再是幽灵」的 id 剔掉并记 warn；且只有
+  `confirm === true` 时才允许 `dryRun: false`。
+- 客户端新增 `GhostCacheBlock()` 组件，挂在「未分组体检」卡片下方（同一张卡里，
+  因为它讲的是同一个问题的另一半）。
+- `__internals` 35 → **37** 项。
+
+**性能**：本机 984 份缓存 vs 657 个目录，`diagnoseGhostCache` 实测 **72 ms**
+（只读目录名 + 解析每份缓存的 identity，不做 zstd 解压）。
+
+**测试**：`test/probe-client.mjs` 新增 5 条断言（幽灵块已挂载、两条路由都在、
+清理必须先进干跑、默认隐藏的 `!== "0"` 语义、localStorage 不可用时仍默认隐藏），
+**204 pass / 0 fail**；`test/probe-ungrouped-guard.mjs` 新增 19 条（造 4 份缓存：仍在
+磁盘上的一份 + 普通幽灵 + 置顶幽灵 + 已归档幽灵），锁住「目录还在就绝不叫幽灵」、
+「只挑出 3 条孤儿」、「置顶/归档单独计数」、「普通幽灵建议删、置顶与归档建议留」、
+「干跑不动磁盘也不动 workspace.json」、「`includePinned:true` 才收置顶」、
+「`includeArchived:true` 才收归档」、
+「越出缓存根的路径拒绝」、「缺 file 的条目只跳过」、「maxItems 封顶」，
+**77 pass / 0 fail**；`probe-digest` 58/0、`probe-filehistory` 33/0 全绿。
+
+**兼容性**：两条新路由、guard 新增两个导出、`__internals` 37 项。无新配置项。
+宿主与客户端均有改动，**需重启 DSH 生效**。
+
+## 0.28.4 — 2026-10-30
+
+### 新增：在侧栏隐藏「未分组」分组（设置 → 归档收藏 → 未分组体检）
+
+**背景**：0.26.0 的体检能诊断和清理「未分组」，但它只能处理**磁盘上真实存在**的
+游离会话。实践中还有一类条目磁盘上根本查不到——它们只存在于投影缓存
+（`~/.dsh/storages/session_projcache/sessions/<id>.json`）里，会话目录早已不在。
+`check-ungrouped.js` 扫目录、宿主 guard 读 registry，两者都报 `clean`，而侧栏
+照样画出这个分组。对这类条目，插件唯一能提供的就是「眼不见为净」的视图开关。
+
+**行为**：设置页「未分组体检」卡片新增一个复选框
+「在侧栏隐藏「未分组」分组（连同组头一起隐藏，不删除任何对话）」。
+勾选后侧栏底部的「未分组」分组整体消失（组头 + 组内会话行一起），取消勾选立刻恢复。
+
+**为什么是纯视图开关**：
+
+- **不删任何东西**。不调用宿主路由，不写 `workspace.json`，不碰会话目录与缓存文件。
+- **不可能误伤真实工作区**。官方给组头打的锚点是 `data-row-key="workspace:<key>"`，
+  而未分组桶的 key 是**空字符串**（`UNGROUPED_KEY = ""`），所以选择器
+  `[data-row-key='workspace:']` 只可能命中这个无主桶——用户自己建的每个工作区
+  key 都非空。
+- **隐藏的是容器，不是组头**。官方结构是
+  `div.groupSection > [组头 div.projectRow, div[role=group]]`，只藏组头会把会话行
+  留在上一个分组下面。插件给组头的 `parentElement` 打 `data-dsh-aff-ungrouped="1"`
+  再整块 `display:none`。
+- **偏好持久化**。开关状态存 `localStorage['dsh-aff-hide-ungrouped']`，重启后仍生效。
+- **卸载即复原**。`stopFilterEnhancer()` 会摘掉 `<html data-dsh-aff-hide-ungrouped>`，
+  插件被禁用后分组自动回来，不会出现「藏了但没 UI 能救」的死角。
+
+**实现细节**：三个模块级函数（`readHideUngrouped` / `markUngroupedGroup` /
+`applyHideUngrouped`）+ 一条 CSS 规则
+`html[data-dsh-aff-hide-ungrouped='1'] [data-dsh-aff-ungrouped='1']{display:none !important}`。
+标记函数接进已有的 `markRows()`（侧栏 MutationObserver 每次重绘都会重新打标，所以
+分组不会在切换会话/重载列表后闪回）。复选框放在说明段之后、诊断结果之前——想隐藏
+的人不需要先跑一次扫描。
+
+**测试**：`test/probe-client.mjs` 新增 4 条断言，分别锁住「只命中空 key 桶」、
+「规则受开关属性 gate」、「隐藏容器而非组头」、「偏好持久化」，**199 pass / 0 fail**。
+
+**兼容性**：无新路由、无新配置项、`__internals` 仍为 35 项。纯客户端改动，需重启生效。
+
 ## 0.28.3 — 2026-10-29
 
 ### 修复：npm 包里混进了两个本地备份文件

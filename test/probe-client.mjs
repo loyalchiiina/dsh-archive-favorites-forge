@@ -1465,6 +1465,49 @@ ok('humanDuration tolerates junk instead of printing NaN',
     bundleSource.includes('api("/ungrouped-diagnose"') &&
     bundleSource.includes('api("/ungrouped-cleanup"') &&
     bundleSource.includes('api("/ungrouped-explain"'))
+  // 🔴 The "hide the bucket" switch must be a pure VIEW toggle.
+  //
+  // The bucket is shipped UI with no owner and no dismiss control, so hiding it
+  // is the only lever a plugin has — but it must never touch data. All four
+  // halves are asserted because each one alone would be a different bug:
+  //   * the marker selector must be the EMPTY key (a real Workspace has a
+  //     non-empty one, so this can never hide a user's own group),
+  //   * the rule must be gated on the switch attribute (not always on),
+  //   * the group CONTAINER must be hidden, not just the header (or its rows
+  //     would be left orphaned under the previous group),
+  //   * the preference must persist, or the group returns on every restart.
+  ok('the ungrouped marker matches only the ownerless bucket',
+    bundleSource.includes('document.querySelectorAll("[data-row-key=\'workspace:\']")'))
+  ok('hiding the ungrouped group is gated on a switch attribute',
+    bundleSource.includes("html[data-dsh-aff-hide-ungrouped='1'] [data-dsh-aff-ungrouped='1']{display:none !important}"))
+  ok('the ungrouped switch hides the group container, not just its header',
+    bundleSource.includes('var seat = headers[i].parentElement;'))
+  ok('the ungrouped switch persists its preference',
+    bundleSource.includes('"dsh-aff-hide-ungrouped"') &&
+    bundleSource.includes('localStorage.setItem(HIDE_UNGROUPED_STORAGE_KEY'))
+  // 🔴 The switch must default to ON. The bucket is shipped UI the user never
+  // asked for, so "unset" has to mean hidden — otherwise every fresh install
+  // shows it again and the switch looks broken. Only an explicit "0" opts in to
+  // seeing it. Asserting the exact comparison keeps a future "=== '1'" refactor
+  // from silently flipping the default back.
+  ok('hiding the ungrouped group defaults to on when unset',
+    bundleSource.includes('localStorage.getItem(HIDE_UNGROUPED_STORAGE_KEY) !== "0"'))
+  ok('the ungrouped default is on even when localStorage is unavailable',
+    /catch \(e\) \{ return true; \}/.test(bundleSource))
+  // 🔴 Ghost-cache cleanup is the only half of this card that can fix the
+  // recurring case, because the directory scan cannot see it. Three properties
+  // matter and each would be a separate bug if missing:
+  //   * the block exists and is mounted in the same card,
+  //   * the destructive call is dry-run-first (`confirm` only on a real run),
+  //   * the host re-diagnoses instead of trusting the client's id list.
+  ok('the ghost-cache block is mounted inside the ungrouped card',
+    bundleSource.includes('React.createElement(GhostCacheBlock, { key: "ghosts" })'))
+  ok('the ghost-cache block reads and cleans through its own routes',
+    bundleSource.includes('api("/ghost-cache-diagnose"') &&
+    bundleSource.includes('api("/ghost-cache-clean"'))
+  ok('the ghost-cache cleanup only confirms after a dry run',
+    bundleSource.includes('confirm: dryRun !== true') &&
+    bundleSource.includes('dryRun: dryRun === true'))
   // The harness ships its own "复制 Session ID" row, which duplicates this
   // plugin's "复制 ID + 路径". A slot cannot remove a sibling slot, so the row
   // is hidden in the DOM. Both halves matter: the labels must be the exact

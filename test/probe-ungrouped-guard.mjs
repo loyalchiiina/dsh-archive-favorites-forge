@@ -32,6 +32,8 @@ import {
   diagnoseUngrouped,
   cleanupUngrouped,
   explainUngrouped,
+  diagnoseGhostCache,
+  cleanupGhostCache,
   UNGROUPED_GUARD_VERSION,
   __internals,
 } from '../lib/ungrouped-guard.js'
@@ -461,6 +463,139 @@ ok('explainUngrouped states that deleting history is NOT the cause',
   brief(paragraphs.filter((text) => text.includes('不是')).join(' | ')))
 ok('explainUngrouped mentions the three hard gates',
   paragraphs.some((text) => text.includes('硬门')), brief(paragraphs[paragraphs.length - 1]))
+
+// ---------------------------------------------------------------------------
+// 11. Ghost cache — the half of the story a directory scan cannot see
+// ---------------------------------------------------------------------------
+//
+// WHY: a session directory can be deleted while `storages/session_projcache/
+// sessions/<id>.json` survives. The sidebar still draws that row (its title lives
+// in the cache, not the directory) and the id is in nobody's `sessionIds`, so it
+// lands in "未分组" — while `diagnoseUngrouped()` above correctly reports clean,
+// because it only walks directories. These assertions pin the ONLY detector that
+// can see that state, and the safety rules around removing it.
+
+const projCacheRoot = join(storages, 'session_projcache', 'sessions')
+mkdirSync(projCacheRoot, { recursive: true })
+
+function cacheFile(sessionId, rows = {}) {
+  const record = {
+    version: 7,
+    record: {
+      identity: { formatVersion: 4, createdAt: CREATED_AT, cwd: WS_PATH, isSeeded: false, inheritedEventCount: 3 },
+      rows: {
+        title: { val: rows.title ?? ('缓存标题 ' + sessionId) },
+        sessionListMetadata: { val: { blank: false, lastPromptAt: rows.lastPromptAt ?? CREATED_AT + 1000 } },
+        turnOutline: { val: { turns: [{ turn: 1, seq: 4, prompt: '1+1', response: '2' }] } },
+      },
+    },
+  }
+  writeFileSync(join(projCacheRoot, sessionId + '.json'), JSON.stringify(record), 'utf8')
+}
+
+// (a) a cache whose session directory STILL exists — must never be called a ghost.
+cacheFile('session-probe-member-0004', { title: '仍在磁盘上的会话' })
+// (b) a plain ghost — the case that fills the bucket.
+cacheFile('session-probe-ghost-0011', { title: '1+1' })
+// (c) a ghost that is PINNED — kept by default, the user marked it deliberately.
+cacheFile('session-probe-ghostpinned-0012', { title: '每日插件版本更新检查' })
+// (d) a ghost that is ARCHIVED — cleaned by default (archived means "out of the way").
+cacheFile('session-probe-ghostarchived-0013', { title: '已归档的幽灵' })
+
+// A workspace record that marks (c) pinned and (d) archived, so the classifier has
+// real input rather than a stub.
+writeFileSync(workspaceFile, JSON.stringify({
+  unit: { name: 'workspace', version: 2 },
+  global: {
+    initialized: true,
+    workspaceIds: ['ws-probe'],
+    archivedSessionIds: ['session-probe-archived-0003', 'session-probe-ghostarchived-0013'],
+    pinnedSessionIds: ['session-probe-ghostpinned-0012'],
+  },
+  tables: {
+    workspaces: {
+      'ws-probe': {
+        path: WS_PATH,
+        title: 'Probe Workspace',
+        sessionIds: ['session-probe-member-0004'],
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+    },
+  },
+}, null, 2), 'utf8')
+const workspaceBytesBeforeGhosts = readFileSync(workspaceFile, 'utf8')
+
+const ghostDiag = await diagnoseGhostCache(null)
+
+ok('diagnoseGhostCache succeeds', ghostDiag.ok === true, brief(ghostDiag.detail ?? ghostDiag.verdict))
+ok('diagnoseGhostCache counts every cache file', ghostDiag.summary.cacheFiles === 4, brief(ghostDiag.summary))
+ok('diagnoseGhostCache finds exactly the 3 orphans', ghostDiag.summary.ghostCount === 3, brief(ghostDiag.summary))
+ok('diagnoseGhostCache never flags a session that still has a directory',
+  !ghostDiag.ghosts.some((row) => row.sessionId === 'session-probe-member-0004'),
+  brief(ghostDiag.ghosts.map((row) => row.sessionId)))
+ok('diagnoseGhostCache separates pinned and archived ghosts',
+  ghostDiag.summary.pinnedGhostCount === 1 && ghostDiag.summary.archivedGhostCount === 1,
+  brief(ghostDiag.summary))
+ok('diagnoseGhostCache verdict is has-ghosts', ghostDiag.verdict === 'has-ghosts', String(ghostDiag.verdict))
+ok('diagnoseGhostCache reads the title out of the cache (that is what the sidebar draws)',
+  ghostDiag.ghosts.some((row) => row.sessionId === 'session-probe-ghost-0011' && row.title === '1+1'),
+  brief(ghostDiag.ghosts.map((row) => row.sessionId + '=' + row.title)))
+
+const ghostAdvice = new Map(ghostDiag.ghosts.map((row) => [row.sessionId, row.advise]))
+ok('a plain ghost is advised delete', ghostAdvice.get('session-probe-ghost-0011') === 'delete', brief([...ghostAdvice]))
+ok('a pinned ghost is advised keep', ghostAdvice.get('session-probe-ghostpinned-0012') === 'keep', brief([...ghostAdvice]))
+ok('an archived ghost is advised keep', ghostAdvice.get('session-probe-ghostarchived-0013') === 'keep', brief([...ghostAdvice]))
+
+const ghostDry = await cleanupGhostCache(null, ghostDiag.ghosts)
+
+ok('cleanupGhostCache defaults to dryRun', ghostDry.dryRun === true, brief(ghostDry))
+// Only the plain ghost is deletable by default. Pinned AND archived ghosts are both
+// advised `keep` by the diagnosis, so the plan must agree — a list that says "keep"
+// while the confirm button deletes would be the worst kind of surprise.
+ok('dryRun plans the one plain ghost and nothing else',
+  ghostDry.deleted.length === 1 && ghostDry.deleted[0] === 'session-probe-ghost-0011',
+  brief(ghostDry.deleted))
+ok('dryRun skips the pinned ghost by default',
+  ghostDry.skipped.some((row) => row.sessionId === 'session-probe-ghostpinned-0012' && row.reason === 'pinned-kept'),
+  brief(ghostDry.skipped))
+ok('dryRun skips the archived ghost by default (matching its keep advice)',
+  ghostDry.skipped.some((row) => row.sessionId === 'session-probe-ghostarchived-0013' && row.reason === 'archived-kept'),
+  brief(ghostDry.skipped))
+ok('dryRun removes no cache file from disk',
+  ghostDiag.ghosts.every((row) => existsSync(row.file)),
+  brief(ghostDiag.ghosts.filter((row) => !existsSync(row.file)).map((row) => row.sessionId)))
+ok('dryRun leaves workspace.json byte-identical',
+  readFileSync(workspaceFile, 'utf8') === workspaceBytesBeforeGhosts)
+
+const ghostWithPinned = await cleanupGhostCache(null, ghostDiag.ghosts, { includePinned: true })
+ok('includePinned:true puts the pinned ghost in the plan',
+  ghostWithPinned.deleted.includes('session-probe-ghostpinned-0012'), brief(ghostWithPinned.deleted))
+
+const ghostWithArchived = await cleanupGhostCache(null, ghostDiag.ghosts, { includeArchived: true })
+ok('includeArchived:true puts the archived ghost in the plan',
+  ghostWithArchived.deleted.includes('session-probe-ghostarchived-0013'), brief(ghostWithArchived.deleted))
+
+const ghostOutside = await cleanupGhostCache(null, [
+  { sessionId: 'session-probe-outside-0010', file: join(root, 'outside', 'session-probe-outside-0010.json') },
+])
+ok('a cache path outside the projcache root is refused',
+  ghostOutside.failures.length === 1 && ghostOutside.failures[0].reason === 'outside-projcache-root',
+  brief(ghostOutside))
+
+const ghostMissing = await cleanupGhostCache(null, [{ sessionId: 'session-probe-ghost-0011' }])
+ok('an entry without a file path is skipped, not deleted',
+  ghostMissing.skipped.some((row) => row.reason === 'missing-id-or-file') && ghostMissing.deleted.length === 0,
+  brief(ghostMissing))
+
+// Only one ghost is deletable under the defaults, so the budget can only be
+// exercised once the kept classes are opted in.
+const ghostBudget = await cleanupGhostCache(null, ghostDiag.ghosts, {
+  maxItems: 1, includePinned: true, includeArchived: true,
+})
+ok('maxItems caps the ghost plan',
+  ghostBudget.deleted.length === 1 && ghostBudget.skipped.some((row) => row.reason === 'budget-exhausted'),
+  brief({ deleted: ghostBudget.deleted, skipped: ghostBudget.skipped }))
 
 // ---------------------------------------------------------------------------
 // Summary
