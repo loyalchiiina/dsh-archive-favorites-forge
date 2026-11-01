@@ -4,6 +4,49 @@ All notable changes to this project are documented here.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 this project uses [Semantic Versioning](https://semver.org/).
 
+## 0.34.0 — 2026-11-01
+
+### 修复：侧栏右键「归档」现在也会删快照（同一个开关，两条路径都管）
+
+0.33.0 的开关只在本卡片的「归档」按钮上生效，README 甚至专门写了一条边界：
+「你在侧栏手动归档的对话，这个开关管不到」。这一条是错的，本版推翻它。
+
+**为什么以前没法做**：`@deepseek-ai/dsh-workspace` 的 `archiveSession()` 本身确实不发任何
+事件（对着出厂 asar 核过，全文 `emit` 命中 0）。但归档集合是存在 storage-domain 的
+`workspace` 全局记录里的，每次写入都会发一条
+
+    domain/changed  { domain: "workspace", table: "", operation: "put",
+                      value: { archivedSessionIds, pinnedSessionIds, workspaceIds, initialized } }
+
+官方自己的 `@deepseek-ai/dsh-api-workspace-controller` 就是靠这条信号感知归档变化的，
+第三方 `@agents-anywhere/dsh-bridge-next` 也直接 `ctx.on("domain/changed")`。`ctx.on` 是
+普通总线订阅，不限制在发出方那个 fiber 里——所以本插件也能收。
+
+**做了什么**：宿主侧新增 SIDEBAR ARCHIVE WATCH，订阅 `domain/changed`，命中
+`workspace` + 全局记录 + `put` 时把新归档集合与上一次做差，差出来的 id 就是「这一次刚被归档的」。
+开关（还是那个 `archive-purge-policy.json`，还是默认关）打开时，逐个删它们的 `history-file/`。
+
+**三条安全设计（都是踩过的坑）**：
+
+| 风险 | 处理 |
+| --- | --- |
+| 第一次收到事件时没有基线，会看起来像「整机所有对话刚被归档」，把所有快照一次扫光 | 第一次 put **只记基线、不删任何东西**（`action: "seeded"`） |
+| 本插件自己的 `/idle-archive` 也会触发同一条事件，导致同一个目录被两次送回收站 | `noteSelfArchived(id)` 打 30 秒标记，watch 看到就跳过（`skipped: "archived-by-this-plugin"`） |
+| 开关关着时归档的对话，后来打开开关会不会被补删 | 只处理「本次事件新出现的 id」，基线在关着时也照常更新，所以那批对话永远不会被补删 |
+
+删除路径没变：仍是 `cleanupSnapshotUsage` → `sendToRecycleBin`，仍然要求「严格位于 sessions 根内的
+`history-file` 目录」，仍然可恢复。不做定时、不做体积上限、不做年龄扫描。
+
+**探针**：新增 `test/probe-sidebar-watch.mjs`（30 条），覆盖 payload 形状过滤、首次只种基线、
+开关关时不删只记日志、开关开时只删新归档的、撤回不触发、撤销归档后再归档会再触发、自己归档不双删、
+未知会话报错不抛异常、以及 apply() 里确实挂在 `ctx.effect` 内。
+
+**客户端文案**：风险框里那句「你在侧栏手动归档的对话，宿主不发事件，这个开关管不到」已改为
+「本卡片的归档按钮和侧栏右键归档都算」，并保留「除归档这个动作外永远不会自动清理」的承诺。
+
+五套旧探针同批全绿：probe-client 331 / probe-snapshot-usage 83 / probe-filehistory 39 /
+probe-ungrouped-guard 86 / probe-digest 58，加新的一套共 **627 条**。
+
 ## 0.33.0 — 2026-11-01
 
 ### 新增：归档后可以顺带删掉快照（默认关闭，这是你 2026-11-01 的决定）

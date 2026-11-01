@@ -410,8 +410,14 @@ conversation this card archives also has its `history-file/` ledger sent to the 
 - Off by default, and turning it on takes two gestures: tick the switch, then confirm in the risk box.
 - It only fires inside the archive request you just made. Refreshing, undoing, measuring and
   previewing never touch a ledger.
-- **Conversations archived from the official sidebar are out of reach**: `archiveSession` in
-  `@deepseek-ai/dsh-workspace` emits nothing, so the plugin never learns about them.
+- **The sidebar right-click 归档 is covered too.** `archiveSession` emits no event of its own,
+  but the archive set lives in the storage-domain `workspace` global record and every write to
+  it emits `domain/changed`; the plugin subscribes to that, so archiving a single conversation
+  from the harness sidebar drops its ledger exactly like the batch button does.
+- **The first observed change only seeds a baseline.** A put carries the whole archive set, so
+  the plugin diffs it against the previous one. Without that baseline the first event would
+  look like "everything was just archived" and would sweep every ledger on the machine;
+  ledgers archived while the switch was OFF are therefore never purged retroactively.
 - Deletion still goes to the recycle bin. There is no timer, no size ceiling and no age sweep —
   those three stay off the table permanently.
 

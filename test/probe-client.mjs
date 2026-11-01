@@ -2384,8 +2384,12 @@ ok('turning the purge switch on asks for a risk acknowledgement first',
   /我知道风险，打开/.test(purgeRiskText), purgeRiskText.slice(0, 400))
 ok('the purge risk box names the recycle bin', /回收站/.test(purgeRiskText))
 ok('the purge risk box names the real loss', /撤销到某一轮/.test(purgeRiskText))
-ok('the purge risk box states the path it cannot cover',
-  /侧栏手动归档/.test(purgeRiskText), purgeRiskText.slice(0, 600))
+// 0.34.0: the sidebar right-click archive is now observed through
+// domain/changed, so the copy must say both paths are covered.
+ok('the purge risk box names the sidebar archive path',
+  /侧栏右键归档/.test(purgeRiskText), purgeRiskText.slice(0, 700))
+ok('the purge risk box promises no other automatic cleanup',
+  /永远不会自动清理/.test(purgeRiskText), purgeRiskText.slice(0, 700))
 ok('acknowledging is required before anything is persisted',
   archivePurgePolicyWrites.length === 0, JSON.stringify(archivePurgePolicyWrites))
 
