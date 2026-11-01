@@ -103,11 +103,30 @@ const small = makeLedger('session-small', [
 // A session directory that never wrote a file: the ledger must not appear.
 mkdirSync(join(projectDir, 'session-empty'), { recursive: true })
 
-// A title for one session only, so the cache lookup is proven to be optional.
+// A title AND a last-activity stamp for one session only, so the cache lookup is
+// proven to be optional. The stamp is nested under sessionListMetadata because
+// that is where the running app keeps it; `timeContext.lastMessageTime` is the
+// fallback, and `identity.createdAt` is the last resort.
+const LAST_PROMPT = T2 + 12345
 mkdirSync(projCache, { recursive: true })
 writeFileSync(join(projCache, 'session-big.json'), JSON.stringify({
   version: 7,
-  record: { identity: { formatVersion: 4, createdAt: 1, cwd: 'C:\\probe' }, rows: { title: { val: 'Big chat' } } },
+  record: {
+    identity: { formatVersion: 4, createdAt: 1, cwd: 'C:\\probe' },
+    rows: {
+      title: { val: 'Big chat' },
+      sessionListMetadata: { val: { lastPromptAt: LAST_PROMPT } },
+    },
+  },
+}), 'utf8')
+// A second cache file that has NO title but DOES have a time context: proves the
+// two fields are read independently and that either one alone is enough.
+writeFileSync(join(projCache, 'session-small.json'), JSON.stringify({
+  version: 7,
+  record: {
+    identity: { formatVersion: 4, createdAt: 1, cwd: 'C:\\probe' },
+    rows: { timeContext: { val: { lastMessageTime: T1 + 777 } } },
+  },
 }), 'utf8')
 
 // ---------------------------------------------------------------------------
@@ -142,7 +161,11 @@ ok('the ledger directory path is reported', bigEntry.dir === big.ledger, bigEntr
 ok('the project name is reported', bigEntry.projectName === '-probe-project', bigEntry.projectName)
 ok('a cached title is picked up', bigEntry.title === 'Big chat', JSON.stringify(bigEntry.title))
 ok('a session with no cache entry still measures', smallEntry.bytes === small.blobBytes + small.manifestBytes, String(smallEntry.bytes))
-ok('a session with no cache entry has an empty title', smallEntry.title === '', JSON.stringify(smallEntry.title))
+// 0.30.0: session-small now HAS a cache entry (time only, no title), so the
+// "no cache entry at all" case needs the third session instead.
+ok('a session with a time-only cache entry keeps an empty title', smallEntry.title === '', JSON.stringify(smallEntry.title))
+ok('a time-only cache entry still yields an activity stamp',
+  smallEntry.lastActivityAt === T1 + 777, String(smallEntry.lastActivityAt))
 
 ok('entries are sorted biggest first', report.entries[0].sessionId === 'session-big',
   report.entries.map((e) => e.sessionId).join(','))
@@ -252,6 +275,75 @@ ok('the bytes freed match the measurement', live.bytesFreed === bigEntry.bytes, 
 const after = await scanSnapshotUsage({ shared: false })
 ok('a re-scan no longer sees the deleted ledger', after.summary.sessions === 1, String(after.summary.sessions))
 ok('the surviving ledger still measures correctly', after.entries[0].bytes === small.blobBytes + small.manifestBytes)
+
+// ---------------------------------------------------------------------------
+// 4b. Inactivity age (0.30.0) + the pre-selection threshold
+// ---------------------------------------------------------------------------
+
+console.log('\n--- inactivity age ---')
+
+ok('the big ledger carries the cached last-activity stamp',
+  bigEntry.lastActivityAt === LAST_PROMPT, String(bigEntry.lastActivityAt))
+// The scan stamps "now" once and subtracts each row's stamp from it, so the
+// value must land just under (Date.now() - LAST_PROMPT); a few ms of drift is
+// the scan itself. Asserting a window rather than an exact number keeps this
+// from becoming a flaky clock test.
+{
+  const expected = Date.now() - LAST_PROMPT
+  ok('idleMs is measured from that stamp against one shared clock',
+    typeof bigEntry.idleMs === 'number' && Math.abs(bigEntry.idleMs - expected) < 5000,
+    String(bigEntry.idleMs) + ' vs ' + String(expected))
+}
+ok('idleMs is never negative', bigEntry.idleMs >= 0, String(bigEntry.idleMs))
+ok('the second cache field is used when the first is absent',
+  smallEntry.lastActivityAt === T1 + 777, String(smallEntry.lastActivityAt))
+
+// A session with no cache row at all must report a NULL age, never zero: an
+// unknown age read as "brand new" would silently dodge any age threshold.
+const noCache = await scanSnapshotUsage({ shared: false })
+ok('the scan survives a missing cache row', noCache.ok === true, JSON.stringify(noCache.detail ?? ''))
+const bigNoCache = __internals.metaFromCache
+ok('metaFromCache is reachable for direct testing', typeof bigNoCache === 'function')
+const absentMeta = bigNoCache(projCache, 'session-does-not-exist')
+ok('an unknown session yields no title', absentMeta.title === '', JSON.stringify(absentMeta.title))
+ok('an unknown session yields a NULL age, not zero',
+  absentMeta.lastActivityAt === null, String(absentMeta.lastActivityAt))
+
+console.log('\n--- pre-selection threshold ---')
+
+const host = await import('../lib/index.js')
+const { clampHours, SNAPSHOT_POLICY_DEFAULT_HOURS, readSnapshotPolicy, writeSnapshotPolicy } = host.__internals
+
+ok('the default threshold is 30 days in hours',
+  SNAPSHOT_POLICY_DEFAULT_HOURS === 720, String(SNAPSHOT_POLICY_DEFAULT_HOURS))
+ok('a sane value passes through', clampHours(48) === 48, String(clampHours(48)))
+ok('a fractional value is rounded', clampHours(47.6) === 48, String(clampHours(47.6)))
+ok('zero falls back to the default', clampHours(0) === SNAPSHOT_POLICY_DEFAULT_HOURS, String(clampHours(0)))
+ok('a negative value falls back to the default',
+  clampHours(-5) === SNAPSHOT_POLICY_DEFAULT_HOURS, String(clampHours(-5)))
+ok('a non-numeric value falls back to the default',
+  clampHours('nonsense') === SNAPSHOT_POLICY_DEFAULT_HOURS, String(clampHours('nonsense')))
+ok('an absurdly large value is clamped, not trusted',
+  clampHours(1e12) === 24 * 365 * 10, String(clampHours(1e12)))
+ok('a tiny value clamps up to one hour', clampHours(0.4) === 1, String(clampHours(0.4)))
+
+// The policy round-trips through disk, and the flag is read strictly.
+const policyDefaults = readSnapshotPolicy()
+ok('the policy defaults to OFF', policyDefaults.autoSelect === false, String(policyDefaults.autoSelect))
+const written = writeSnapshotPolicy({ autoSelect: true, hours: 96 })
+ok('writing the policy returns the normalised payload',
+  written.autoSelect === true && written.hours === 96, JSON.stringify(written))
+const reread = readSnapshotPolicy()
+ok('the policy survives a round-trip', reread.autoSelect === true && reread.hours === 96, JSON.stringify(reread))
+// Anything that is not literally `true` must read as OFF — this flag guards a
+// deletion-aiding control, so a truthy string must not switch it on.
+writeFileSync(join(process.env.DSH_AFF_STATE_ROOT, 'snapshot-policy.json'),
+  JSON.stringify({ version: 1, autoSelect: 'yes', hours: 5 }), 'utf8')
+const coerced = readSnapshotPolicy()
+ok('a truthy non-boolean does not switch the pre-tick on',
+  coerced.autoSelect === false, String(coerced.autoSelect))
+ok('a valid hours value still survives a bad flag', coerced.hours === 5, String(coerced.hours))
+writeSnapshotPolicy({ autoSelect: false, hours: SNAPSHOT_POLICY_DEFAULT_HOURS })
 
 // ---------------------------------------------------------------------------
 // 5. Contract surface

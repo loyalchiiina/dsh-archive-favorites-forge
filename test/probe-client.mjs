@@ -378,6 +378,10 @@ async function settle(ms = 120) {
 // Snapshot-usage fixtures. The report shape mirrors lib/snapshot-usage.js.
 let snapshotUsageCalls = 0
 const snapshotCleanupRequests = []
+// The saved policy, mutated by the fake /snapshot-policy route so a test can
+// flip the switch and then re-measure against the new value.
+let snapshotPolicy = { autoSelect: false, hours: 720 }
+const snapshotPolicyWrites = []
 const SNAPSHOT_USAGE_REPORT = {
   ok: true,
   generatedAt: '2026-11-01T00:00:00.000Z',
@@ -390,6 +394,13 @@ const SNAPSHOT_USAGE_REPORT = {
     totalEntries: 268,
     largest: { sessionId: 'session-big', bytes: 10917809, title: 'Big chat' },
   },
+  // The card now shows an AGE per row, needs to know which conversations are
+  // starred, and carries the saved policy so a re-scan can re-tick from it.
+  // `session-big` is deliberately OLD (40 days) and `session-small` recent,
+  // so the pre-tick assertions can tell "old enough" from "not old enough".
+  favoriteCount: 1,
+  favoriteBytes: 2048,
+  policy: { autoSelect: false, hours: 720 },
   entries: [
     {
       sessionId: 'session-big',
@@ -404,6 +415,9 @@ const SNAPSHOT_USAGE_REPORT = {
       firstSnapshotAt: 1793264117719,
       lastSnapshotAt: 1793264521739,
       title: 'Big chat',
+      lastActivityAt: Date.now() - 40 * 24 * 3600000,
+      idleMs: 40 * 24 * 3600000,
+      favorite: false,
     },
     {
       sessionId: 'session-small',
@@ -418,6 +432,26 @@ const SNAPSHOT_USAGE_REPORT = {
       firstSnapshotAt: 1793264117700,
       lastSnapshotAt: 1793264521700,
       title: 'Small chat',
+      lastActivityAt: Date.now() - 15 * 60000,
+      idleMs: 15 * 60000,
+      favorite: false,
+    },
+    {
+      sessionId: 'session-star',
+      projectName: 'proj',
+      dir: 'C:\\fake\\sessions\\proj\\session-star\\history-file',
+      bytes: 2048,
+      blobBytes: 2000,
+      blobCount: 1,
+      manifestBytes: 48,
+      entryCount: 1,
+      skippedCount: 0,
+      firstSnapshotAt: 1793264117700,
+      lastSnapshotAt: 1793264521700,
+      title: 'Starred chat',
+      lastActivityAt: Date.now() - 90 * 24 * 3600000,
+      idleMs: 90 * 24 * 3600000,
+      favorite: true,
     },
   ],
   problems: [],
@@ -431,9 +465,31 @@ globalThis.fetch = async (url, init) => {
   else if (url.endsWith('/archived')) payload = { ok: true, archivedSessionIds: FAKE_ARCHIVED }
   else if (url.endsWith('/favorite')) payload = { ok: true, favorites: FAKE_FAVORITES }
   else if (url.endsWith('/session-info')) payload = { ok: true, sessionId: body?.sessionId, path: 'C:\\fake\\sessions\\' + String(body?.sessionId) + '\\session.v4.jsonl.zstd' }
+  else if (url.includes('/idle-archive')) {
+    // 0.30.0: the idle card renders its candidates inline, so the probe needs a
+    // non-empty preview or the whole list is untested. Two rows here: one with a
+    // real title and one blank (a blank session must never look like a normal
+    // conversation).
+    payload = {
+      ok: true,
+      hours: 720,
+      idleCount: 2,
+      sample: [
+        { id: 'session-old', title: 'Old thread', cwd: 'C:\\fake\\one', updatedAt: Date.now() - 40 * 24 * 3600000, blank: false },
+        { id: 'session-blank', title: '', cwd: 'C:\\fake\\two', updatedAt: Date.now() - 50 * 24 * 3600000, blank: true },
+      ],
+    }
+  }
   else if (url.endsWith('/snapshot-usage')) {
     snapshotUsageCalls += 1
-    payload = SNAPSHOT_USAGE_REPORT
+    payload = { ...SNAPSHOT_USAGE_REPORT, policy: { ...snapshotPolicy } }
+  }
+  else if (url.endsWith('/snapshot-policy')) {
+    if (body && body.policy) {
+      snapshotPolicyWrites.push(body.policy)
+      snapshotPolicy = { ...snapshotPolicy, ...body.policy }
+    }
+    payload = { ok: true, policy: { ...snapshotPolicy } }
   }
   else if (url.endsWith('/snapshot-cleanup')) {
     snapshotCleanupRequests.push(body)
@@ -1145,8 +1201,36 @@ ok('settings section no longer mentions 轮次',
 ok('settings section offers an export-to-txt control',
   sectionButtons.some((b) => textOf(b).includes('导出清单')),
   JSON.stringify(sectionButtons.map((b) => textOf(b)).filter(Boolean)))
-ok('settings section no longer renders an inline candidate list',
-  !sectionBodyText.includes('天前'), sectionBodyText.slice(0, 160))
+// 0.30.0 REVERSED THIS ASSERTION. Through 0.29.0 the idle card offered only
+// an export button, so the probe demanded that no candidate list render inline.
+// That made the user run to the filesystem to judge what would be archived —
+// "an archive you must export to review is an archive nobody reviews" — so
+// 0.30.0 renders the candidates in the card. The probe now demands the list IS
+// there, with the age and the workspace of every row, and that a blank session
+// is labelled as such instead of showing up as a nameless row.
+// The preview lands asynchronously: re-render in place (rewind the hook
+// cursor, keep the slots the setters closed over) so the tree can actually
+// contain the rows this block is about. Reading the pre-settle tree would make
+// every assertion below fail for a reason that has nothing to do with the code.
+hookCursor = 0
+effectQueue.length = 0
+const idleTree = expand(sectionForSort.component({ close() {} }), 0)
+for (const fn of effectQueue) { try { fn() } catch (e) {} }
+const idleText = textOf(idleTree)
+const idleButtons = collectButtons(idleTree, [])
+
+ok('settings section renders the idle candidates inline',
+  idleText.includes('天前'), idleText.slice(0, 400))
+ok('the inline candidates show how stale each one is',
+  idleText.includes('40 天前') && idleText.includes('50 天前'),
+  idleText.slice(0, 400))
+ok('the inline candidates name the workspace',
+  idleText.includes('one') && idleText.includes('two'),
+  idleText.slice(0, 400))
+ok('a blank candidate is labelled, not left nameless',
+  idleText.includes('（新会话）'), idleText.slice(0, 400))
+ok('the idle card still offers the export control next to the list',
+  idleButtons.some((b) => textOf(b).includes('导出清单')))
 
 // ---------------------------------------------------------------------------
 // Single-session delete menu row: must render ONLY for archived, unfavourited
@@ -1581,8 +1665,12 @@ ok('humanDuration tolerates junk instead of printing NaN',
   ok('no standalone export card remains',
     !bundleSource.includes('key: "export"') &&
     !bundleSource.includes('清单为制表符分隔的文本'))
+  // The window is character distance inside one component. It grew with the
+  // 0.30.0 inline candidate list, which sits between the head of the card and
+  // the export result — so the bound is generous on purpose: what is being
+  // asserted is "same component, in that order", not a layout pixel count.
   ok('the export result is rendered inside the idle card',
-    /key: "idle"[\s\S]{0,7000}?exportInfo === null/.test(bundleSource))
+    /key: "idle"[\s\S]{0,12000}?exportInfo === null/.test(bundleSource))
   // The settings page's own cards. A bare COUNT over the whole bundle stopped
   // being meaningful once 0.26.0 added a second component with its own pushed
   // children, so this asserts the cards by name instead — that is what "the
@@ -2053,17 +2141,32 @@ function findButtonByText(tree, re) {
   return findButtonByText(tree.children ?? [], re)
 }
 
-/** Depth-first search for the first checkbox input (or the n-th one). */
-function findCheckbox(tree, index = 0) {
+/**
+ * Depth-first search for a checkbox input.
+ *
+ * 🔴 THE CARD NOW HOLDS TWO KINDS OF CHECKBOX — the pre-tick SWITCH and one per
+ * ledger ROW — so "the first checkbox" is no longer a meaningful selector. Rows
+ * carry `aria-label="选择会话 …"`; anything else is the policy switch. The
+ * filter is what keeps these assertions about rows from silently binding to the
+ * switch and passing (or failing) for the wrong reason.
+ */
+function findCheckbox(tree, index = 0, filter = null) {
   const found = []
   ;(function walk(node) {
     if (node === null || node === undefined) return
     if (Array.isArray(node)) { node.forEach(walk); return }
     if (typeof node !== 'object') return
-    if (node.type === 'input' && node.props?.type === 'checkbox') found.push(node)
+    if (node.type === 'input' && node.props?.type === 'checkbox') {
+      if (filter === null || filter.test(String(node.props?.['aria-label'] ?? ''))) found.push(node)
+    }
     walk(node.children ?? [])
   })(tree)
   return found[index] ?? null
+}
+
+/** The pre-tick switch, by its visible label rather than by position. */
+function findPolicySwitch(tree) {
+  return findCheckbox(tree, 0, /^$/)
 }
 
 resetHooks()
@@ -2098,11 +2201,17 @@ const measuredTree = expand(sections[0].component({}), 0)
 for (const fn of effectQueue) { try { fn() } catch (e) {} }
 const measuredText = textOf(measuredTree)
 
-ok('measured card reports the session count', /2 个会话/.test(measuredText), measuredText.slice(0, 200))
+ok('measured card reports the cleanupable session count', /2 个可清理会话/.test(measuredText), measuredText.slice(0, 240))
 ok('measured card reports total size in human units', /11\.0 MB|11 MB/.test(measuredText), measuredText.slice(0, 200))
 ok('measured card reports blob and row totals', /151 个快照文件/.test(measuredText) && /268 条记录/.test(measuredText), measuredText.slice(0, 200))
 ok('measured card reports the elapsed time', /统计耗时 62 ms/.test(measuredText), measuredText.slice(0, 200))
-ok('measured card names the largest session', /最大一项：Big chat/.test(measuredText), measuredText.slice(0, 200))
+// The largest row is still reported, but it now sits BELOW the favourites
+// summary — the card lifts starred conversations out of the list, so both
+// numbers have to coexist.
+ok('measured card names the largest session', /最大一项：Big chat/.test(measuredText), measuredText.slice(0, 240))
+ok('measured card states the favourites carve-out',
+  /另有 1 个已收藏会话占用 2\.0 KB/.test(measuredText) && /不列入清理/.test(measuredText),
+  measuredText.slice(0, 300))
 ok('measured card lists both sessions', /Big chat/.test(measuredText) && /Small chat/.test(measuredText))
 ok('measured card warns what deletion costs', /撤销到某一轮/.test(measuredText))
 ok('measured card does NOT re-scan after rendering the result',
@@ -2115,7 +2224,7 @@ ok('delete is disabled until something is selected', dryBtnIdle !== null && dryB
 ok('card says what to do when nothing is selected', /先勾选要删的会话/.test(measuredText))
 
 // Tick the first row, re-render, and the delete button must wake up.
-const box = findCheckbox(measuredTree)
+const box = findCheckbox(measuredTree, 0, /选择会话/)
 ok('each ledger row carries a checkbox', box !== null && typeof box.props.onChange === 'function')
 box?.props?.onChange?.()
 hookCursor = 0
@@ -2160,9 +2269,97 @@ ok('confirm sends dryRun:false and confirm:true',
   JSON.stringify(snapshotCleanupRequests[0]))
 ok('cancel button is offered next to confirm', findButtonByText(confirmTree, /取消/) !== null)
 
+// ---------------------------------------------------------------------------
+// 0.30.0 — the age column, the pre-tick switch, and the favourites carve-out
+// ---------------------------------------------------------------------------
+
+// Re-render the measured card so the policy row is present and readable.
+hookCursor = 0
+effectQueue.length = 0
+const policyTree = expand(sections[0].component({}), 0)
+for (const fn of effectQueue) { try { fn() } catch (e) {} }
+const policyText = textOf(policyTree)
+
+ok('the card shows an inactivity age per row',
+  /40 天/.test(policyText) && /15 分钟/.test(policyText),
+  policyText.slice(0, 400))
+ok('a favourited conversation is NOT listed as a cleanup candidate',
+  !/Starred chat/.test(policyText) && !/选择会话 Starred chat/.test(policyText),
+  policyText.slice(0, 400))
+ok('the pre-tick switch is present and OFF by default',
+  /统计时自动勾选/.test(policyText) && /默认关闭/.test(policyText),
+  policyText.slice(0, 400))
+const policySwitch = findPolicySwitch(policyTree)
+ok('the pre-tick switch is an unchecked checkbox',
+  policySwitch !== null && policySwitch.props.checked === false)
+ok('nothing is pre-ticked while the switch is off',
+  !/已选 /.test(policyText), policyText.slice(0, 400))
+
+// Flipping it ON must ask for a risk acknowledgement first — never enable
+// destructive pre-selection on a single click.
+snapshotPolicyWrites.length = 0
+policySwitch?.props?.onChange?.()
+hookCursor = 0
+effectQueue.length = 0
+const riskTree = expand(sections[0].component({}), 0)
+for (const fn of effectQueue) { try { fn() } catch (e) {} }
+const riskText = textOf(riskTree)
+ok('turning the switch on asks for a risk acknowledgement first',
+  /我知道风险，打开/.test(riskText), riskText.slice(0, 400))
+ok('the risk box names the real cost',
+  /撤销到以前的某一轮/.test(riskText) && /两次确认|再点一次/.test(riskText),
+  riskText.slice(0, 400))
+ok('the ask does not write the policy yet', snapshotPolicyWrites.length === 0,
+  JSON.stringify(snapshotPolicyWrites))
+
+const ackBtn = findButtonByText(riskTree, /我知道风险，打开/)
+ackBtn?.props?.onClick?.()
+await settle()
+ok('acknowledging persists autoSelect:true',
+  snapshotPolicyWrites.length === 1 && snapshotPolicyWrites[0]?.autoSelect === true,
+  JSON.stringify(snapshotPolicyWrites))
+
+hookCursor = 0
+effectQueue.length = 0
+const onTree = expand(sections[0].component({}), 0)
+for (const fn of effectQueue) { try { fn() } catch (e) {} }
+const onText = textOf(onTree)
+ok('the switch reads as enabled afterwards', /已开启/.test(onText), onText.slice(0, 400))
+// 40 days idle > the 720h (30 day) threshold → ticked. 15 minutes → not.
+ok('the aged row is pre-ticked', /已选 1 个/.test(onText), onText.slice(0, 400))
+
+// Turning it back off must clear the pre-selection, not leave stale ticks.
+const onSwitch = findPolicySwitch(onTree)
+snapshotPolicyWrites.length = 0
+onSwitch?.props?.onChange?.()
+await settle()
+hookCursor = 0
+effectQueue.length = 0
+const offTree = expand(sections[0].component({}), 0)
+for (const fn of effectQueue) { try { fn() } catch (e) {} }
+ok('turning the switch off persists autoSelect:false',
+  snapshotPolicyWrites.length === 1 && snapshotPolicyWrites[0]?.autoSelect === false,
+  JSON.stringify(snapshotPolicyWrites))
+ok('turning the switch off drops the pre-selection',
+  /先勾选要删的会话/.test(textOf(offTree)), textOf(offTree).slice(0, 400))
+
+// A preferred flow: with the switch on, pressing measure re-ticks. That is the
+// "每次点击快照会自动勾选" behaviour the user asked for, and it must go through
+// the same scan-on-demand route, not a new one.
+snapshotPolicy = { autoSelect: true, hours: 720 }
+const remeasureBtn = findButtonByText(offTree, /重新统计/)
+remeasureBtn?.props?.onClick?.()
+await settle()
+hookCursor = 0
+effectQueue.length = 0
+const remeasuredTree = expand(sections[0].component({}), 0)
+for (const fn of effectQueue) { try { fn() } catch (e) {} }
+ok('a re-measure with the switch on pre-ticks the aged row again',
+  /已选 1 个/.test(textOf(remeasuredTree)), textOf(remeasuredTree).slice(0, 400))
+
 // The card must never fetch on its own again — no polling, no interval.
 const totalScans = fetchCalls.filter((c) => String(c.url).endsWith('/snapshot-usage')).length - settingsBefore
-ok('the card never scans without a button press', totalScans <= 2, String(totalScans))
+ok('the card never scans without a button press', totalScans <= 4, String(totalScans))
 
 // ---------------------------------------------------------------------------
 // Summary

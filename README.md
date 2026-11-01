@@ -56,7 +56,7 @@ so it composes with the shipped UI instead of patching it.
 | ① | **收藏对话**：归档或未归档的对话都能收藏；「…」菜单项 + 行内 ☆，星标即时生效 | **Favourite any conversation** — archived or not; a menu row plus an inline ☆ star, applied optimistically |
 | ② | **复制 ID + 路径**：「…」菜单一键复制会话 ID 与转录文件绝对路径（两行） | **Copy id + path** — one menu row copying the session id and the transcript's absolute path |
 | ③ | **单条永久删除**：任意非收藏对话可删，二次确认；删完侧栏**立即移除该行** | **Per-conversation permanent delete** — any non-favourite, behind a confirmation, and the sidebar row disappears at once |
-| ④ | **超时批量归档**：把闲置超过 N 小时的未归档对话一次性归档，可撤回 | **Idle batch archive** — archives conversations quiet for more than N hours, undoable |
+| ④ | **超时批量归档**：把闲置超过 N 小时的未归档对话一次性归档，可撤回；**候选直接列在卡片里**（闲置时长 + 标题 + 工作区），不必先导出清单才知道要归档什么 | **Idle batch archive** — archives conversations quiet for more than N hours, undoable; the candidates are **listed right in the card** (idle time, title, workspace), so you never have to export a list just to see what would be archived |
 | ⑤ | **导出清单**：制表符分隔的 txt，含**对话名称 / 对话ID / 所属工作区 / 闲置时长 / 最后活动时间**；可复制路径或直接打开所在文件夹 | **Export list** — a tab-separated txt with name, id, workspace, idle time and last-activity time; copy its path or reveal it in the file manager |
 | ⑥ | **收藏筛选**：视图选项菜单新增「仅显示收藏（已归档）」与「仅显示收藏（未归档）」 | **Favourites filter** — view-options rows for favourites that are archived, and favourites that are not |
 | ⑦ | **批量删除**：一键永久删除「已归档且未收藏」的对话 | **Batch delete** — permanently removes the archived-and-unfavourited conversations |
@@ -69,7 +69,7 @@ so it composes with the shipped UI instead of patching it.
 | ⑭ | **缓存幽灵清理**：清掉「会话目录已不在、但投影缓存还留着」的孤儿记录——这是「未分组」清完又冒出来的真正原因，目录扫描看不见它 | **Ghost-cache sweep** — removes orphan projection records whose session directory is long gone; this is why the bucket keeps reappearing and no directory scan can see it |
 | ⑮ | **隐藏「未分组」分组**：一个纯视图开关（**默认开启**），把侧栏底部那个分组（连组头）整体藏起来，不删任何对话 | **Hide the "Ungrouped" group** — a pure view switch (**on by default**) that hides the whole bucket (header and rows) from the sidebar; nothing is deleted |
 | ⑯ | **新窗口继续对话**：把长对话蒸馏成一份交接书（用户要求时间线 + 任务进度清单 + 团队任务 + 最近进展），先弹窗报告「检测到任务进行到 第 N 轮」，确认后新开一个 `新对话-<原名>`、**继承原对话的预设智慧体**并自动把交接书发过去 | **Continue in a new window** — distils a long conversation into a handover brief (requirement timeline, task progress, team tasks, latest progress), reports "you are N turns in" first, then on confirm opens `新对话-<original title>` with the **original agent preset inherited** and sends the brief as its first message |
-| ⑰ | **快照占用统计 + 手动删除**：设置页点「立即统计」才扫一次（渲染时不扫、无定时器），列出每个会话 `history-file/` 占了多少、多少个快照文件、多少条记录、最后快照时间；勾选后先试算再二次确认，删的目录进 Windows 回收站。**绝不自动清理** | **Snapshot usage & manual cleanup** — one press of "measure now" scans the ledger directories once (never on render, never on a timer), reporting bytes, blob count, row count and last snapshot time per conversation; tick rows, dry-run, confirm, and the directory goes to the recycle bin. **Nothing is ever pruned automatically** |
+| ⑰ | **快照占用统计 + 手动删除**：设置页点「立即统计」才扫一次（渲染时不扫、无定时器），列出每个会话 `history-file/` 占了多少、多少个快照文件、多少条记录、**不活跃时长**；**收藏的会话不进可删列表**，只在汇总行单独报；可选打开「超时预勾选」（默认关，开前须确认风险）自动勾上超时行，删除仍需先试算再二次确认，删的目录进 Windows 回收站。**绝不自动清理** | **Snapshot usage & manual cleanup** — one press of "measure now" scans the ledger directories once (never on render, never on a timer), reporting bytes, blob count, row count, **idle time and last snapshot time** per conversation; **favourited conversations are lifted out of the cleanup list** and reported on a separate summary line; an optional "pre-tick idle rows" switch (off by default, risk acknowledgement required) ticks rows past the threshold after each scan; deletion still needs a dry run plus a confirm, and the directory goes to the recycle bin. **Nothing is ever pruned automatically** |
 
 ### Where each feature lives
 
@@ -376,6 +376,18 @@ auto-delete.
 - **The numbers are a snapshot in time.** The card does not poll. Press the
   button again to refresh; a scan over a few dozen ledgers takes tens of
   milliseconds, so refreshing is cheap.
+- **Idle time comes from the projection cache, not from the ledger.** The card
+  reads the last prompt stamp out of
+  `~/.dsh/storages/session_projcache/sessions/<id>.json`. A ledger whose cache
+  row is gone shows `-` rather than `0 minutes` — an unknown age must never be
+  able to pass an age threshold by looking brand new.
+- **Favourites are protected twice.** They are lifted out of the list for
+  display, and the host refuses them again on `/snapshot-cleanup` (logging the
+  refusal). Hiding a checkbox is a convention; refusing the write is the guard.
+- **The idle pre-tick switch is not a delete switch.** It only decides which
+  rows arrive already ticked after a scan. Every delete still costs two clicks,
+  and turning the switch on first shows a risk box that names what will be
+  ticked and what deleting a ledger costs.
 
 ### Limits of the Ungrouped health check
 
