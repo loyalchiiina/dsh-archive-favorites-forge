@@ -467,6 +467,12 @@ globalThis.fetch = async (url, init) => {
   if (url.endsWith('/workspace-titles')) {
     payload = { ok: true, titles: { 'c:\\fake\\beta': 'DeepSeek Chat' } }
   }
+  // 0.37.2 — 收藏清单 rows carry a size and a file count too. A favourite is
+  // stored as {at,title,cwd} only, so the host measures the session directory
+  // on demand; this stub is what that route answers with.
+  else if (url.endsWith('/favorite-facts')) {
+    payload = { ok: true, facts: { 'session-fav-1': { bytes: 2048, fileCount: 2 } } }
+  }
   else if (url.endsWith('/favorites')) payload = { ok: true, favorites: FAKE_FAVORITES }
   else if (url.endsWith('/archived')) {
     // 0.31.0: the batch-delete card renders the archive as a list, so the stub
@@ -2636,6 +2642,47 @@ ok('measured card warns what deletion costs', /撤销到某一轮/.test(measured
     String((rowSource.match(/React\.createElement\(ListHead,/g) || []).length))
   ok('the caption names the six columns in the agreed order',
     /var LIST_COLUMNS = \["文件大小", "时长", "对话名称", "文件数量", "工作区名称", "时间"\]/.test(rowSource))
+}
+
+// ---------------------------------------------------------------------------
+// 0.37.2 — the three things the second screenshot batch exposed.
+//
+//   · 时长 was the only column with two colours: rows past the threshold were
+//     painted warning-orange, so the same column looked like two columns. One
+//     colour for the column; the checkbox already answers "is this row late".
+//   · 收藏清单 squeezed 对话名称 down to `De…` because it also carried three
+//     buttons in the row. A list that cannot fit scrolls sideways now — it
+//     never silently drops or truncates a column to make room.
+//   · 收藏清单 printed 文件大小 / 文件数量 as dashes: a favourite is stored as
+//     {at,title,cwd}, so the page asks the host to measure the directory.
+// ---------------------------------------------------------------------------
+{
+  const rowSource = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  const sessionRowStart = rowSource.indexOf('function SessionRow(props)')
+  const sessionRowEnd = rowSource.indexOf('function usePreTickPolicy(')
+  const sessionRowSource = rowSource.slice(sessionRowStart, sessionRowEnd)
+  ok('the 时长 column is drawn in one colour',
+    sessionRowStart > 0 && sessionRowEnd > sessionRowStart &&
+    !/color: stale/.test(sessionRowSource) &&
+    !/state-warn-primary/.test(sessionRowSource),
+    String(sessionRowSource.length))
+  ok('a narrow list scrolls instead of crushing the name column',
+    rowSource.includes('var LIST_SCROLL = { overflowX: "auto", overflowY: "auto" }') &&
+    (rowSource.match(/LIST_SCROLL\)/g) || []).length >= 5, String((rowSource.match(/LIST_SCROLL\)/g) || []).length))
+  ok('the row keeps a floor width so columns cannot be squeezed away',
+    rowSource.includes('var ROW_MIN_WIDTH = "700px"') &&
+    rowSource.includes('var NAME_MIN_WIDTH = "110px"') &&
+    rowSource.includes('minWidth: ROW_MIN_WIDTH') &&
+    rowSource.includes('minWidth: NAME_MIN_WIDTH'))
+}
+{
+  const favTree = await renderOnView('fav')
+  const favPanel = favTree === null ? null : panelOf(favTree, 'fav')
+  const favText = favPanel === null ? '' : textOf(favPanel)
+  ok('a favourite row shows the size of its session directory',
+    /2\.0 KB/.test(favText), favText.slice(0, 300))
+  ok('a favourite row shows a file count too',
+    /2 个文件/.test(favText), favText.slice(0, 300))
 }
 ok('measured card does NOT re-scan after rendering the result',
   fetchCalls.filter((c) => String(c.url).endsWith('/snapshot-usage')).length - settingsBefore === 1,

@@ -4,6 +4,62 @@ All notable changes to this project are documented here.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 this project uses [Semantic Versioning](https://semver.org/).
 
+## 0.37.2 — 2026-11-01
+
+### 同一列两种颜色，等于两列
+
+用户第二组截图里有三张表并排看：批量归档的候选行里，超阈值的行「时长」被染成警示橙；收藏清单里同样位置的「时长」是常规色。同一列在不同栏呈现两种语义，眼睛会把它读成两个不同的列——而「这一行是不是超时了」本来就由左边的勾选框回答（超时行会被自动勾上）。色相在这里是第二遍重复回答同一个问题，代价是列的身份被破坏。
+
+**修法**：`SessionRow` 删掉 `stale` 判断与 `color: var(--dsw-alias-state-warn-primary, #ffb454)`，整列统一 `opacity: .8`。`PreTickPanel` 与批量归档候选里的两处 `stale` 传参一并删除。
+
+### 「显示不全」不是宽度问题，是压缩顺序问题
+
+收藏清单的行右侧挂着「ID / 路径 / 取消收藏」三个按钮，flex 争抢之下「对话名称」被压到只剩 `De…`。把列宽从 68/62/66/24%/96px 收到 60/56/62/18%/100px 只能缓解，不能解决——**只要列表没有横向滚动，总有一列会被牺牲**。
+
+**修法**：新增 `LIST_SCROLL = { overflowX: "auto", overflowY: "auto" }` 与 `ROW_MIN_WIDTH = "700px"` / `NAME_MIN_WIDTH = "110px"`。五行列表（未分组 / 孤儿缓存 / 勾选表 / 批量归档候选 / 收藏清单）容器改用 `Object.assign({...}, LIST_SCROLL)`，`ListHead` 与 `SessionRow` 根节点加 `minWidth: ROW_MIN_WIDTH`，名称列从 `flex: "1", minWidth: 0` 改成 `flex: "1 1 auto", minWidth: NAME_MIN_WIDTH`。放不下时**横向滚动**；任何列都不会被挤掉或挤碎。同时把各列表 `maxHeight` 抬高（240→330、200→300、240→330、240→300、260→330）。
+
+「时间」列最后定在 **100px + `whiteSpace: "nowrap"`**：88px 时 headless 预览里 `2026-10-09 22:25` 会折成两行，行高一变，六列的对齐就白做了。折行的代价比多占 12px 大得多。
+
+### 收藏清单的两列破折号
+
+收藏项在 `favorites.json` 里只存 `{at, title, cwd}`——没有字节、没有文件数，所以 0.37.1 之后这两格仍然是 `—`（`/archived` 与 `/idle-archive` 补了字段，收藏没有对应路由）。
+
+**修法**：新增 `GET /favorite-facts`（`lib/index.js`，插在 `/favorites` 之前）：读 `readState().favorites` 的 key，交给 `measureSessionDirsFor(ids, ctx)`（0.37.1 那个整目录 stat，120 行上限、扇出 8、异常静默），返回 `{ ok: true, facts: { [sessionId]: { bytes, fileCount } } }`。客户端 `loadFavFacts()` 在**挂载时**与**按「刷新」且当前栏是收藏清单时**各调一次；行构造里 `sizeText` / `fileCountText` 用这份 facts，取不到仍回破折号。
+
+### 孤儿缓存的「文件数量」
+
+一个孤儿缓存就是**一份**投影缓存 json（目录已不存在，但它自己是一个文件）。原来这一格是空串→破折号，现在画 `countText(1)`：数量是已知的，就没理由装不知道。
+
+### 刷新语义
+
+`refreshCurrent()` 在 `view === "fav"` 分支里同时触发 `loadFavFacts()`，并继续把「收藏清单」记进「刚刚刷新：…」注脚。刷新依旧**只**重读、不扫盘：不挂定时器、不在渲染里扫、打开页面不扫。
+
+### 探针
+
+七套合计 **689** 条全绿：
+
+| 探针 | 条数 |
+| --- | --- |
+| probe-client | 355（+5） |
+| probe-snapshot-usage | 89 |
+| probe-filehistory | 39 |
+| probe-ungrouped-guard | 86 |
+| probe-digest | 58 |
+| probe-sidebar-watch | 43 |
+| probe-delete-ledger | 19 |
+
+新增 5 条断言及理由：
+
+- `the 时长 column is drawn in one colour` —— 切出 `SessionRow` 源码段，断言其中不再出现 `color: stale` 与 `state-warn-primary`。只断言「没有 warn 色」不够：得确认整列走的是同一个 `opacity`。
+- `a narrow list scrolls instead of crushing the name column` —— 断言 `LIST_SCROLL` 常量存在，且被至少 5 处列表容器使用。
+- `the row keeps a floor width so columns cannot be squeezed away` —— 断言 `ROW_MIN_WIDTH` / `NAME_MIN_WIDTH` 两个下限常量存在并被 `ListHead` / `SessionRow` 引用。
+- `a favourite row shows the size of its session directory` —— stub 加 `/favorite-facts` 返回 `{'session-fav-1': {bytes:2048, fileCount:2}}`，断言收藏行渲染出 `2.0 KB`。
+- `a favourite row shows a file count too` —— 同上，断言 `2 个文件`。
+
+### 升级提示
+
+改的是 client 与 host 两侧，**必须完全退出 DSH 再重开**才加载 0.37.2。收藏清单第一次打开时两列会先显示破折号、拿到 facts 后填上——这是刻意的：页面打开不扫盘这条边界没有为它让路。
+
 ## 0.37.1 — 2026-11-01
 
 ### 「文件大小 / 文件数量」不再是一片破折号
