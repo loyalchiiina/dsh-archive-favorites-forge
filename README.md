@@ -414,6 +414,7 @@ conversation this card archives also has its `history-file/` ledger sent to the 
   but the archive set lives in the storage-domain `workspace` global record and every write to
   it emits `domain/changed`; the plugin subscribes to that, so archiving a single conversation
   from the harness sidebar drops its ledger exactly like the batch button does.
+- **On by default since 0.35.0.** A missing policy file — or one that cannot be parsed — reads as ON; only an explicit `enabled: false`, written when you untick the box, keeps the ledger. Re-arming it from OFF still costs the risk acknowledgement.
 - **The first observed change only seeds a baseline.** A put carries the whole archive set, so
   the plugin diffs it against the previous one. Without that baseline the first event would
   look like "everything was just archived" and would sweep every ledger on the machine;

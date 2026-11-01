@@ -556,7 +556,8 @@ globalThis.fetch = async (url, init) => {
 // 0.31.0: the batch-delete card keeps its own saved pre-tick policy, separate
 // from the snapshot card — deleting a conversation and deleting its undo
 // ledger have different blast radii, so the two thresholds must not be shared.
-let archivePurgePolicy = { enabled: false }
+// Fresh install: no policy file on disk, which the host now reads as ON.
+let archivePurgePolicy = { enabled: true }
 const archivePurgePolicyWrites = []
 let archiveDeletePolicy = { autoSelect: false, hours: 720 }
 const archiveDeletePolicyWrites = []
@@ -2350,12 +2351,19 @@ ok('the switcher remembers the choice via localStorage',
   'client.js does not persist the selected view')
 
 {
-// --- 0.33.0: archive-triggered snapshot purge -----------------------------
+// --- 0.33.0 (+0.35.0 default flip): archive-triggered snapshot purge ------
 //
-// This is the first switch in the plugin that authorises a destructive action
-// WITHOUT the user pressing a delete button, so the assertions hold it to the
-// two-step gesture: off by default, a risk block on the way on, nothing written
-// until the risk is acknowledged.
+// The only switch in the plugin that authorises a destructive action WITHOUT a
+// per-item delete click. 0.35.0 made it ON out of the box (user decision
+// 2026-11-01), so the assertions now pin a different — and stricter — shape:
+//   * a fresh install renders it ticked,
+//   * turning it OFF is immediate and writes enabled:false,
+//   * turning it back ON still costs the full risk acknowledgement.
+await settle()
+hookCursor = 0
+effectQueue.length = 0
+expand(sections[0].component({}), 0)
+for (const fn of effectQueue) { try { fn() } catch (e) {} }
 await settle()
 hookCursor = 0
 effectQueue.length = 0
@@ -2365,22 +2373,40 @@ const purgeText0 = textOf(purgeTree0)
 ok('the purge switch is on the idle card', /归档后顺带删除这些对话的快照/.test(purgeText0),
   purgeText0.slice(0, 200))
 const purgeBox0 = findCheckbox(purgeTree0, 0, /归档后删除快照开关/)
-ok('the purge switch is an unchecked checkbox',
-  purgeBox0 !== null && purgeBox0.props.checked === false)
-ok('the purge switch states it is off by default', /默认关闭/.test(purgeText0), purgeText0.slice(0, 400))
-ok('nothing was written to the purge policy yet', archivePurgePolicyWrites.length === 0,
+ok('a fresh install renders the purge switch ticked',
+  purgeBox0 !== null && purgeBox0.props.checked === true)
+ok('the purge switch states it is on by default', /默认开启/.test(purgeText0), purgeText0.slice(0, 400))
+ok('nothing is written merely by rendering', archivePurgePolicyWrites.length === 0,
   JSON.stringify(archivePurgePolicyWrites))
 ok('the purge switch never promises a silent cleanup',
-  /除这个归档动作外不会自动清理任何东西/.test(purgeText0) || /默认关闭/.test(purgeText0))
+  /除归档这个动作外不会自动清理任何东西/.test(purgeText0))
 
+// --- turning it OFF is one click and needs no acknowledgement ---------------
+archivePurgePolicyWrites.length = 0
 purgeBox0?.props?.onChange?.()
+await settle()
+ok('turning the purge switch off persists enabled:false immediately',
+  archivePurgePolicyWrites.length === 1 && archivePurgePolicyWrites[0]?.enabled === false,
+  JSON.stringify(archivePurgePolicyWrites))
+hookCursor = 0
+effectQueue.length = 0
+const purgeOffTree = expand(sections[0].component({}), 0)
+for (const fn of effectQueue) { try { fn() } catch (e) {} }
+const purgeOffText = textOf(purgeOffTree)
+ok('the off state no longer claims to be the default', /已关闭/.test(purgeOffText), purgeOffText.slice(0, 400))
+const purgeBoxOff = findCheckbox(purgeOffTree, 0, /归档后删除快照开关/)
+ok('the disabled purge switch is unticked', purgeBoxOff !== null && purgeBoxOff.props.checked === false)
+
+// --- turning it back ON costs the risk acknowledgement ---------------------
+archivePurgePolicyWrites.length = 0
+purgeBoxOff?.props?.onChange?.()
 await settle()
 hookCursor = 0
 effectQueue.length = 0
 const purgeRiskTree = expand(sections[0].component({}), 0)
 for (const fn of effectQueue) { try { fn() } catch (e) {} }
 const purgeRiskText = textOf(purgeRiskTree)
-ok('turning the purge switch on asks for a risk acknowledgement first',
+ok('re-arming the purge switch asks for a risk acknowledgement first',
   /我知道风险，打开/.test(purgeRiskText), purgeRiskText.slice(0, 400))
 ok('the purge risk box names the recycle bin', /回收站/.test(purgeRiskText))
 ok('the purge risk box names the real loss', /撤销到某一轮/.test(purgeRiskText))
@@ -2411,17 +2437,9 @@ effectQueue.length = 0
 const purgeOnTree = expand(sections[0].component({}), 0)
 for (const fn of effectQueue) { try { fn() } catch (e) {} }
 const purgeOnText = textOf(purgeOnTree)
-
-ok('the purge switch reads as enabled afterwards', /已开启/.test(purgeOnText), purgeOnText.slice(0, 400))
+ok('the purge switch reads as enabled afterwards', /默认开启/.test(purgeOnText), purgeOnText.slice(0, 400))
 const purgeBoxOn = findCheckbox(purgeOnTree, 0, /归档后删除快照开关/)
-ok('the enabled purge switch is checked', purgeBoxOn !== null && purgeBoxOn.props.checked === true)
-
-archivePurgePolicyWrites.length = 0
-purgeBoxOn?.props?.onChange?.()
-await settle()
-ok('turning the purge switch off persists enabled:false',
-  archivePurgePolicyWrites.length === 1 && archivePurgePolicyWrites[0]?.enabled === false,
-  JSON.stringify(archivePurgePolicyWrites))
+ok('the enabled purge switch is ticked', purgeBoxOn !== null && purgeBoxOn.props.checked === true)
 }
 
 

@@ -96,6 +96,12 @@ const firstLedger = plantLedger(firstDir, 'first')
 const secondLedger = plantLedger(secondDir, 'second')
 const thirdLedger = plantLedger(thirdDir, 'third')
 
+// Used by the explicit-opt-out section below.
+const optedOutId = 'session-55555555-5555-5555-5555-555555555555'
+const optedOutDir = join(projectTwo, internals.bareId(optedOutId))
+makeSession(optedOutDir, 'session.v4.jsonl')
+const optedOutLedger = plantLedger(optedOutDir, 'opted-out')
+
 /** One `domain/changed` payload exactly like the storage domain emits. */
 function change(archivedSessionIds, extra = {}) {
   return {
@@ -130,30 +136,33 @@ ok('the first observation seeds instead of purging', seeded.action === 'seeded',
 ok('seeding keeps the existing ledger', existsSync(firstLedger))
 ok('seeding does not log a purge', !lines.some(([, m]) => /purge/.test(m)))
 
-console.log('\n=== switch OFF: a new archive changes nothing ===\n')
+console.log('\n=== default ON: a new archive purges with no policy file ===\n')
 
-// Default policy file is absent → OFF.
-const off = await internals.handleWorkspaceArchiveChange(change([firstId, secondId]), ctx)
-ok('with the switch off the watch reports disabled', off.action === 'disabled', JSON.stringify(off))
-ok('with the switch off the new ledger survives', existsSync(secondLedger))
-ok('with the switch off the log says why', lines.some(([level, m]) => level === 'info' && /purge switch is OFF/.test(m)))
-
-console.log('\n=== switch ON: the newly archived session loses its ledger ===\n')
-
-internals.writeArchivePurgePolicy({ enabled: true })
-ok('the policy persisting round-trip reads back on', internals.readArchivePurgePolicy().enabled === true)
-
+// 0.35.0: an absent policy file now means ON, so no writeArchivePurgePolicy
+// call is needed to arm it — that IS the default a fresh install gets.
+ok('an absent policy file reads as ON', internals.readArchivePurgePolicy().enabled === true)
 const on = await internals.handleWorkspaceArchiveChange(change([firstId, secondId, thirdId]), ctx)
 ok('with the switch on the watch purges', on.action === 'purged', JSON.stringify(on).slice(0, 200))
 ok('the newly archived ledger is gone', !existsSync(thirdLedger))
-// second was archived while the switch was OFF. Purging it now would be a
-// retroactive sweep of something the user archived under a different setting.
-ok('a ledger archived while the switch was OFF is left alone', existsSync(secondLedger))
+// Both new ids in this event were archived under the (now default) ON setting,
+// so both ledgers must be gone. Nothing is ever swept retroactively: the seed
+// set was [firstId], so first's ledger is untouched by this event.
+ok('both newly archived ledgers are gone', !existsSync(secondLedger) && !existsSync(thirdLedger))
+ok('the pre-existing ledger is never swept retroactively', existsSync(firstLedger))
 ok('the session directory itself survives', existsSync(secondDir))
 ok('the session log survives (only the ledger moves)', existsSync(join(secondDir, 'session.v4.jsonl')))
-ok('it reports only the sessions this event archived', Array.isArray(on.fresh) && on.fresh.length === 1 && on.fresh[0] === thirdId, JSON.stringify(on.fresh))
+ok('it reports exactly the sessions this event archived', Array.isArray(on.fresh) && on.fresh.length === 2 && on.fresh.includes(secondId) && on.fresh.includes(thirdId), JSON.stringify(on.fresh))
 ok('it reports the bytes freed', typeof on.bytesFreed === 'number', String(on.bytesFreed))
 ok('its log line names the sidebar path', lines.some(([, m]) => /sidebar archive purge/.test(m)))
+
+console.log('\n=== explicit opt-out still disarms it ===\n')
+
+internals.writeArchivePurgePolicy({ enabled: false })
+ok('an explicit enabled:false reads back as off', internals.readArchivePurgePolicy().enabled === false)
+const optedOut = await internals.handleWorkspaceArchiveChange(change([firstId, secondId, thirdId, optedOutId]), ctx)
+ok('with an explicit opt-out the watch reports disabled', optedOut.action === 'disabled', JSON.stringify(optedOut))
+ok('with an explicit opt-out the new ledger survives', existsSync(optedOutLedger))
+ok('with an explicit opt-out the log says why', lines.some(([, m]) => /purge switch is OFF/.test(m)))
 
 console.log('\n=== un-archiving is NOT a purge trigger ===\n')
 
@@ -163,6 +172,9 @@ ok('the surviving ledger is untouched', existsSync(firstLedger))
 
 console.log('\n=== re-archiving the same session after removal does fire again ===\n')
 
+// Re-arm: the opt-out section above left the policy at enabled:false, and this
+// check is about the archive trigger, not about the switch state.
+internals.writeArchivePurgePolicy({ enabled: true })
 const again = await internals.handleWorkspaceArchiveChange(change([firstId, secondId]), ctx)
 ok('re-adding the id is a fresh archive, so it purges again', again.action === 'purged', JSON.stringify(again).slice(0, 200))
 ok('the re-archived ledger is gone', !existsSync(secondLedger))
