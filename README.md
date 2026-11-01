@@ -402,6 +402,19 @@ auto-delete.
   would let a cautious snapshot threshold silently authorise deleting chats, so
   the two policies live in different files.
 
+### Limits of deleting a conversation
+
+- **Deleting a conversation always deletes its snapshot ledger, and no switch
+  can change that.** Both delete entry points (the sidebar row menu and the
+  settings page batch delete) call the same host function, which removes the
+  whole session directory; `history-file/` lives inside it.
+- **That delete is permanent and does not go to the recycle bin.** Star the
+  conversation instead (favourites are refused), or delete only the ledger —
+  ledger deletion does go to the recycle bin.
+- **Archiving is not deleting.** It only writes registry state; the transcript
+  and the ledger both stay. Only the "drop snapshots on archive" switch sends
+  the ledger to the recycle bin, and that switch is on by default since 0.35.0.
+
 ### Limits of the archive-purge switch
 
 The 超时归档 card carries a switch, **off by default**, called 归档后删除快照. When it is on, every
