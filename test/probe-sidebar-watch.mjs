@@ -195,6 +195,98 @@ ok('the unknown session surfaces as a failure entry', (missing.results ?? []).so
 ok('the plugin exports the watch seams', typeof internals.handleWorkspaceArchiveChange === 'function' && typeof internals.resetArchiveWatchSeed === 'function')
 ok('the host source installs the watch inside a ctx.effect', /ctx\.effect\(\(\) => installArchiveWatch\(ctx\)/.test(readFileSync(join(here, '..', 'lib', 'index.js'), 'utf8')))
 
+
+// ---------------------------------------------------------------------------
+// Startup baseline (seedArchiveWatch)
+//
+// Seeding on the first event is safe but lossy: that event becomes the
+// baseline, so the archive that produced it is never examined. A live test
+// caught exactly that — the user archived one conversation right after a
+// restart, the switch was on, and nothing happened. These checks pin the fix.
+// ---------------------------------------------------------------------------
+
+function fakeCtx(replies) {
+  const log = []
+  let index = 0
+  const ctx = {
+    logger: {
+      info: (message) => { log.push(['info', message]) },
+      warn: (message) => { log.push(['warn', message]) },
+      error: (message) => { log.push(['error', message]) },
+    },
+    get: () => {
+      const reply = replies[Math.min(index, replies.length - 1)]
+      index += 1
+      // A function reply models a getter that THROWS (the "not started yet"
+      // window); anything else is returned as the registry object itself.
+      return typeof reply === 'function' ? reply() : reply
+    },
+  }
+  return { ctx, log }
+}
+
+{
+  internals.resetArchiveWatchSeed()
+  const ready = fakeCtx([{ archivedSessionIds: [firstId, secondId] }])
+  const armed = await internals.seedArchiveWatch(ready.ctx, 3, 1)
+  ok('a readable registry arms the baseline at load time', armed === 2, String(armed))
+  ok('arming is logged once', ready.log.some(([level, m]) => level === 'info' && /baseline of 2 archived/.test(m)))
+
+  // With the baseline already armed, the very first event must be treated as a
+  // real archive — this is the exact sequence the live test performed.
+  const fifthId = 'session-55555555-5555-5555-5555-555555555555'
+  const fifthDir = join(projectOne, internals.bareId(fifthId))
+  makeSession(fifthDir, 'session.v4.jsonl')
+  const fifthLedger = plantLedger(fifthDir, 'fifth')
+  internals.writeArchivePurgePolicy({ enabled: true })
+  const firstAfterRestart = await internals.handleWorkspaceArchiveChange(
+    change([firstId, secondId, fifthId]),
+    ready.ctx,
+  )
+  ok(
+    'the first archive after a restart is purged, not swallowed as a baseline',
+    firstAfterRestart.action === 'purged',
+    JSON.stringify(firstAfterRestart).slice(0, 200),
+  )
+  ok('that first archive really lost its ledger', !existsSync(fifthLedger))
+}
+
+{
+  // The registry exists long before it is usable. "not started yet" must be
+  // retried, not treated as a hard failure.
+  internals.resetArchiveWatchSeed()
+  const starting = fakeCtx([
+    () => { throw new Error('workspace registry is not started yet') },
+    () => { throw new Error('workspace registry is not started yet') },
+    { archivedSessionIds: [firstId] },
+  ])
+  const slow = await internals.seedArchiveWatch(starting.ctx, 5, 1)
+  ok('a registry that is still starting is retried until readable', slow === 1, String(slow))
+}
+
+{
+  // Degraded but safe: no baseline means the first-event path still applies.
+  internals.resetArchiveWatchSeed()
+  const broken = fakeCtx([null])
+  const gaveUp = await internals.seedArchiveWatch(broken.ctx, 2, 1)
+  ok('an unreadable registry leaves the baseline unset', gaveUp === null, String(gaveUp))
+  const seededLater = await internals.handleWorkspaceArchiveChange(change([firstId]), broken.ctx)
+  ok('without a baseline the first event falls back to seeding', seededLater.action === 'seeded')
+}
+
+{
+  internals.resetArchiveWatchSeed()
+  const crashing = fakeCtx([() => { throw new Error('storage exploded') }])
+  const warned = await internals.seedArchiveWatch(crashing.ctx, 2, 1)
+  ok('a non-transient registry error is reported, not retried forever', warned === null, String(warned))
+  ok('that error reaches the log as a warning', crashing.log.some(([level, m]) => level === 'warn' && /could not arm/.test(m)))
+}
+
+ok('the plugin exports the startup seed seam', typeof internals.seedArchiveWatch === 'function')
+ok(
+  'the host source arms the baseline inside a ctx.effect',
+  /ctx\.effect\(\(\) => seedArchiveWatch|seedArchiveWatch\(ctx\)/.test(readFileSync(join(here, '..', 'lib', 'index.js'), 'utf8')),
+)
 // ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------

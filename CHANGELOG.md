@@ -4,6 +4,33 @@ All notable changes to this project are documented here.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 this project uses [Semantic Versioning](https://semver.org/).
 
+## 0.34.1 — 2026-11-01
+
+### 修复：重启后第一次归档会被当作「基线」吞掉
+
+用户的实测抓到了两个独立问题。他在 16:41:04 让宿主加载 v0.34.0，16:42:22 在侧栏右键归档了一个对话，结果快照没删、日志里连一行都没有。
+
+**原因一（行为正确，但不够明显）**：`archive-purge-policy.json` 根本不存在，也就是开关从来没打开过。默认关时不该删任何东西，这一半是对的。
+
+**原因二（真缺陷）**：观察器把「第一次看到的归档集合」当作基线，而基线事件本身是不处理的。也就是说**每次重启后，第一个被归档的对话一定会被吞掉**——恰好就是「打开开关、马上归档一个试试」这个动作。原来的探针只测了「先种基线，再归档第二个」，所以没暴露。
+
+修法是启动时就把基线装好，不再等第一个事件：`seedArchiveWatch()` 在 `ctx.effect` 里读取实时注册表的 `archivedSessionIds`，并带短暂重试（服务存在但没就绪时 `archivedSessionIds` 会抛 `not started yet`，最多重试 40 × 250ms）。读不到时基线保持 `null`，退化成原来的首事件种基线路径——降级但不会误删。
+
+同时补了两条日志，让下次实测能直接看出问题在哪：
+
+- `sidebar archive watch armed — baseline of N archived session(s)`：启动时基线已就绪；
+- `sidebar archive watch seeded a baseline of N archived session(s)`：退化路径生效（说明启动时没读到）。
+
+### 顺手修掉的一个隐患
+
+重试之间的 `setTimeout` 原来带 `unref()`。`unref` 的定时器不会维持事件循环，所以当它是唯一待办时，node 会在 `await` 中途直接退出——探针当场以 `Detected unsettled top-level await` 挂住。循环本身有上界（最坏 10 秒），改成普通定时器即可，代价为零。
+
+### 验证
+
+`test/probe-sidebar-watch.mjs` 从 30 条增至 **41** 条，新增段落专门钉这次的事故：可读注册表在加载期就装好基线并留日志、启动中（`not started yet`）会重试到可读、读不到时基线留空且首事件仍走种基线、非瞬时错误只报一次 warn 不无限重试、以及**「重启后的第一次归档必须被清理，不能被当作基线吞掉」**这条正向断言。六套探针合计 **638 条全绿**（0.34.0 是 627）。
+
+边界未变：默认关闭；只在「归档」动作发生时触发；仍送 Windows 回收站；除归档外不做任何自动清理。
+
 ## 0.34.0 — 2026-11-01
 
 ### 修复：侧栏右键「归档」现在也会删快照（同一个开关，两条路径都管）

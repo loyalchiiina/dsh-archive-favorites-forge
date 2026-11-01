@@ -418,6 +418,11 @@ conversation this card archives also has its `history-file/` ledger sent to the 
   the plugin diffs it against the previous one. Without that baseline the first event would
   look like "everything was just archived" and would sweep every ledger on the machine;
   ledgers archived while the switch was OFF are therefore never purged retroactively.
+- **The baseline is armed at plugin load time** (0.34.1+). It used to be taken from the first
+  archive event, which meant every restart swallowed exactly one archive — precisely the
+  "flip the switch on, archive one to try it" action. It is now read from the live registry at
+  startup and the log shows `watch armed — baseline of N`. If the registry is not readable yet
+  the baseline stays empty and the first-event path applies (degraded, never unsafe).
 - Deletion still goes to the recycle bin. There is no timer, no size ceiling and no age sweep —
   those three stay off the table permanently.
 
