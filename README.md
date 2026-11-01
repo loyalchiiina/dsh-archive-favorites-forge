@@ -69,6 +69,7 @@ so it composes with the shipped UI instead of patching it.
 | ⑭ | **缓存幽灵清理**：清掉「会话目录已不在、但投影缓存还留着」的孤儿记录——这是「未分组」清完又冒出来的真正原因，目录扫描看不见它 | **Ghost-cache sweep** — removes orphan projection records whose session directory is long gone; this is why the bucket keeps reappearing and no directory scan can see it |
 | ⑮ | **隐藏「未分组」分组**：一个纯视图开关（**默认开启**），把侧栏底部那个分组（连组头）整体藏起来，不删任何对话 | **Hide the "Ungrouped" group** — a pure view switch (**on by default**) that hides the whole bucket (header and rows) from the sidebar; nothing is deleted |
 | ⑯ | **新窗口继续对话**：把长对话蒸馏成一份交接书（用户要求时间线 + 任务进度清单 + 团队任务 + 最近进展），先弹窗报告「检测到任务进行到 第 N 轮」，确认后新开一个 `新对话-<原名>`、**继承原对话的预设智慧体**并自动把交接书发过去 | **Continue in a new window** — distils a long conversation into a handover brief (requirement timeline, task progress, team tasks, latest progress), reports "you are N turns in" first, then on confirm opens `新对话-<original title>` with the **original agent preset inherited** and sends the brief as its first message |
+| ⑰ | **快照占用统计 + 手动删除**：设置页点「立即统计」才扫一次（渲染时不扫、无定时器），列出每个会话 `history-file/` 占了多少、多少个快照文件、多少条记录、最后快照时间；勾选后先试算再二次确认，删的目录进 Windows 回收站。**绝不自动清理** | **Snapshot usage & manual cleanup** — one press of "measure now" scans the ledger directories once (never on render, never on a timer), reporting bytes, blob count, row count and last snapshot time per conversation; tick rows, dry-run, confirm, and the directory goes to the recycle bin. **Nothing is ever pruned automatically** |
 
 ### Where each feature lives
 
@@ -79,6 +80,7 @@ so it composes with the shipped UI instead of patching it.
 | Favourites filter | **视图选项 → 筛选会话** |
 | Edit-resend / undo turn / delete one message | The ↺ ✏️ 🗑 buttons under each **user** message in the transcript |
 | Undo and edit confirmation | A modal (`shell.overlay`) — the only place the plugin draws outside the sidebar |
+| **Snapshot usage & cleanup** | **Settings → 归档收藏** (the 「快照占用」 card) |
 
 ## Install
 
@@ -355,6 +357,25 @@ auto-delete.
   branch. Anything in it that you wanted to keep should be copied out first.
 - **Blank conversations are not affected** by any of this: they have no turns
   and no tool calls.
+
+### Limits of the snapshot usage card
+
+- **It only measures, it never cleans.** No timer, no size ceiling, no age
+  policy. Every byte reported and every delete performed follows a button press.
+  Automatic pruning used to exist here and was removed **because it could delete
+  the wrong thing silently** — it is not coming back.
+- **Deleting a ledger costs that conversation its rollback history.** The
+  conversation itself, its transcript and every file on disk stay exactly as they
+  are; what disappears is the ability to undo a turn in *that* conversation.
+- **The delete is per-directory, not per-entry.** There is no "drop only the
+  oldest snapshot" — a session's `history-file/` is one unit. Keeping a
+  half-trimmed manifest would let a rollback fail with a missing blob instead of
+  failing cleanly.
+- **Bytes are the ledger on disk right now**, including the manifest itself.
+  It is not an estimate of what a dedupe pass *could* reclaim.
+- **The numbers are a snapshot in time.** The card does not poll. Press the
+  button again to refresh; a scan over a few dozen ledgers takes tens of
+  milliseconds, so refreshing is cheap.
 
 ### Limits of the Ungrouped health check
 

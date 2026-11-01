@@ -4,6 +4,77 @@ All notable changes to this project are documented here.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 this project uses [Semantic Versioning](https://semver.org/).
 
+## 0.29.0 — 2026-11-01
+
+### 新增：快照占用统计 + 手动删除（issue #2 的第 1 项）
+
+报告（@ripley-xl）：文件快照没有存储管理 —— 无配额、无保留期、无用量展示，
+随会话数量线性增长。
+
+**只做第 1 项，并且永久不做第 2/3/4 项，这是产品决定不是遗漏。**
+
+报告列了四条（他自己按改动大小排序）：
+
+| # | 建议 | 本版 | 为什么 |
+|---|---|---|---|
+| 1 | 只读用量接口 + 设置页展示 + 手动清理按钮 | **做了** | 只增加可见性和一次手动动作，不动任何自动行为 |
+| 2 | 按时间清理归档会话 | **不做** | 自动删除一旦跑起来，误删就是静默的 |
+| 3 | `maxBytesPerSession` 超体积丢最旧条目 | **不做** | 同上，且会破坏 manifest 与 blob 的一致性 |
+| 4 | 跨会话内容寻址去重 | **不做** | 把 blob 移出会话目录，会话级回滚就多了一层全局状态 |
+
+第 2 项这条路以前走过 —— 正是**因为容易误删，那个功能被拿掉了**，不会再加回来。
+所以本版的边界写死为：**统计只能手动触发，删除只能手动执行，任何定时器、
+任何体积上限、任何按天数淘汰都不存在。**
+
+**做了什么**
+
+- 新增 `lib/snapshot-usage.js`：遍历 `~/.dsh/sessions/**/history-file/`，
+  每个 ledger 报出 `bytes`（blob 字节 + manifest 字节）、`blobCount`、`entryCount`、
+  `skippedCount`（`blob:null` 的行）、`firstSnapshotAt` / `lastSnapshotAt`、`title`。
+- 新增两条宿主路由：`/snapshot-usage`（只读扫描）与 `/snapshot-cleanup`
+  （默认 `dryRun: true`，只有 `confirm: true` 才真删）。
+- 设置页「归档收藏」新增「快照占用」卡片：**渲染时不扫描**，
+  点「立即统计」才扫一次；结果停在组件自己的 state 里，不会后台反复扫。
+  勾选 → 试算删除 → 二次确认 → 真删，删的是 `history-file/` 整个目录，
+  走 Windows 回收站（可恢复）。
+
+**性能（对应「不得实时统计、必须手动」这条要求）**
+
+| 指标 | 实测 |
+|---|---|
+| 全量扫描（本机 59 个 ledger / 26.7 MB / 588 blob / 1248 行） | **62 ms** |
+| 第二次扫描 | 49 ms |
+| 3 个并发请求 | 46 ms，且三者拿到**同一个**结果对象 |
+| 跳过投影缓存查标题 | 25 ms |
+| 并发度 | `CONCURRENCY = 32` |
+
+实现上刻意避开了三件拖慢扫描的事：不发同步 I/O 遍历树（全 `node:fs/promises`
++ 手写 `mapLimit` 并发池）、**完全不 `JSON.parse` manifest**（行数用
+`charCodeAt === 10` 数、跳过数用 `'"blob":null'` 计数、时间范围只扫首尾
+`"time":` 后的数字）、同一 roots 的并发调用合并成一次飞行中的 promise
+（`inflight` 表，完成即释放）。
+
+**删除护栏（三层，缺一不可）**
+
+1. `isPathInside(sessionsRoot, dir)` —— 严格子路径，根目录本身也拒（`t === r` → false）；
+2. `basename(dir) === 'history-file'` —— 叶子名必须是 ledger 目录；
+3. `lstat` 拒符号链接 —— 防止「字符串在树内、实际指向树外」。
+
+宿主侧在删除前**重新扫描一遍**再和页面传来的 id 求交，不信任页面上的计划
+（列表和点击之间会话可能已被删或重建）。回收站失败时降级为**改名到
+`snapshot_quarantine_<stamp>/`**（同一卷、可手工恢复），任何路径都不会走到
+`rm -rf`。
+
+**探针**：新增 `test/probe-snapshot-usage.mjs`（61 条）覆盖测量精度、
+「模块里没有 setInterval/setTimeout」、干跑默认值、三条护栏、真实删除只动勾选项。
+`test/probe-client.mjs` 新增 28 条覆盖卡片契约（渲染不扫、一次点击一次扫描、
+两段式确认、`dryRun`/`confirm` 取值）。
+
+**验证**：五套探针 client 260 + filehistory 39 + ungrouped-guard 86 + digest 58 +
+snapshot-usage 61 = **504 条全绿**；`node --check` 四个 lib 文件通过。
+
+---
+
 ## 0.28.9 — 2026-11-01
 
 ### 修复：会话菜单里插件的行没有 hover 高亮（issue #1）

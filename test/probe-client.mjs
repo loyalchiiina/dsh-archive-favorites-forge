@@ -375,6 +375,54 @@ async function settle(ms = 120) {
   await new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+// Snapshot-usage fixtures. The report shape mirrors lib/snapshot-usage.js.
+let snapshotUsageCalls = 0
+const snapshotCleanupRequests = []
+const SNAPSHOT_USAGE_REPORT = {
+  ok: true,
+  generatedAt: '2026-11-01T00:00:00.000Z',
+  elapsedMs: 62,
+  root: 'C:\\fake\\sessions',
+  summary: {
+    sessions: 2,
+    totalBytes: 11534336,
+    totalBlobs: 151,
+    totalEntries: 268,
+    largest: { sessionId: 'session-big', bytes: 10917809, title: 'Big chat' },
+  },
+  entries: [
+    {
+      sessionId: 'session-big',
+      projectName: 'proj',
+      dir: 'C:\\fake\\sessions\\proj\\session-big\\history-file',
+      bytes: 10917809,
+      blobBytes: 10865557,
+      blobCount: 143,
+      manifestBytes: 52252,
+      entryCount: 257,
+      skippedCount: 102,
+      firstSnapshotAt: 1793264117719,
+      lastSnapshotAt: 1793264521739,
+      title: 'Big chat',
+    },
+    {
+      sessionId: 'session-small',
+      projectName: 'proj',
+      dir: 'C:\\fake\\sessions\\proj\\session-small\\history-file',
+      bytes: 616527,
+      blobBytes: 616000,
+      blobCount: 8,
+      manifestBytes: 527,
+      entryCount: 11,
+      skippedCount: 1,
+      firstSnapshotAt: 1793264117700,
+      lastSnapshotAt: 1793264521700,
+      title: 'Small chat',
+    },
+  ],
+  problems: [],
+}
+
 globalThis.fetch = async (url, init) => {
   fetchCalls.push({ url, init })
   const body = init && init.body ? JSON.parse(init.body) : null
@@ -383,6 +431,21 @@ globalThis.fetch = async (url, init) => {
   else if (url.endsWith('/archived')) payload = { ok: true, archivedSessionIds: FAKE_ARCHIVED }
   else if (url.endsWith('/favorite')) payload = { ok: true, favorites: FAKE_FAVORITES }
   else if (url.endsWith('/session-info')) payload = { ok: true, sessionId: body?.sessionId, path: 'C:\\fake\\sessions\\' + String(body?.sessionId) + '\\session.v4.jsonl.zstd' }
+  else if (url.endsWith('/snapshot-usage')) {
+    snapshotUsageCalls += 1
+    payload = SNAPSHOT_USAGE_REPORT
+  }
+  else if (url.endsWith('/snapshot-cleanup')) {
+    snapshotCleanupRequests.push(body)
+    payload = {
+      ok: true,
+      dryRun: body?.dryRun === true,
+      deleted: body?.dryRun === true ? (body?.sessionIds ?? []) : [],
+      skipped: [],
+      failures: [],
+      bytesFreed: body?.dryRun === true ? 1234567 : 0,
+    }
+  }
   else if (url.endsWith('/delete')) {
     deletedRequests.push(body?.sessionIds ?? [])
     payload = { ok: true, deleted: deleteShouldSucceed ? (body?.sessionIds ?? []) : [], skipped: [], failures: [] }
@@ -1963,6 +2026,143 @@ const roundTripped = host.__internals.readState()
 ok('favorites round-trip through the store',
   roundTripped.favorites['session-round-trip']?.title === 'RT',
   JSON.stringify(roundTripped))
+
+// ---------------------------------------------------------------------------
+// Snapshot usage card ("快照占用")
+//
+// Two things are load-bearing here and both come straight from the user:
+//   * the card must NOT scan on render — no timer, no mount-time walk;
+//   * pressing the button scans once and shows the numbers, plus a dry-run
+//     before anything is deleted.
+// ---------------------------------------------------------------------------
+
+console.log('\n=== snapshot usage card ===\n')
+
+/** Depth-first search for the first element whose own text matches `re`. */
+function findButtonByText(tree, re) {
+  if (tree === null || tree === undefined) return null
+  if (Array.isArray(tree)) {
+    for (const child of tree) {
+      const hit = findButtonByText(child, re)
+      if (hit !== null) return hit
+    }
+    return null
+  }
+  if (typeof tree !== 'object') return null
+  if (tree.type === 'button' && re.test(textOf(tree))) return tree
+  return findButtonByText(tree.children ?? [], re)
+}
+
+/** Depth-first search for the first checkbox input (or the n-th one). */
+function findCheckbox(tree, index = 0) {
+  const found = []
+  ;(function walk(node) {
+    if (node === null || node === undefined) return
+    if (Array.isArray(node)) { node.forEach(walk); return }
+    if (typeof node !== 'object') return
+    if (node.type === 'input' && node.props?.type === 'checkbox') found.push(node)
+    walk(node.children ?? [])
+  })(tree)
+  return found[index] ?? null
+}
+
+resetHooks()
+snapshotUsageCalls = 0
+const settingsBefore = fetchCalls.filter((c) => String(c.url).endsWith('/snapshot-usage')).length
+const settingsTree = expand(sections[0].component({}), 0)
+for (const fn of effectQueue) { try { fn() } catch (e) {} }
+
+ok('settings page shows the snapshot-usage card', /快照占用/.test(textOf(settingsTree)))
+
+// 🔴 The constraint: rendering is IDLE. Nothing may have been measured yet.
+const scansOnRender = fetchCalls.filter((c) => String(c.url).endsWith('/snapshot-usage')).length - settingsBefore
+ok('settings page performs NO snapshot scan on render', scansOnRender === 0, String(scansOnRender))
+ok('snapshot card starts idle with an explicit button',
+  /立即统计/.test(textOf(settingsTree)) && /点「立即统计」/.test(textOf(settingsTree)))
+ok('snapshot card explains the ledger in plain words', /history-file/.test(textOf(settingsTree)))
+
+// Press the button. This is the ONLY path that may scan.
+const measureBtn = findButtonByText(settingsTree, /立即统计/)
+ok('snapshot card button is a real clickable button', measureBtn !== null && typeof measureBtn.props.onClick === 'function')
+measureBtn?.props?.onClick?.()
+await settle()
+
+const scansAfterClick = fetchCalls.filter((c) => String(c.url).endsWith('/snapshot-usage')).length - settingsBefore
+ok('pressing the button scans exactly once', scansAfterClick === 1, String(scansAfterClick))
+
+// Re-render in place (rewind the hook cursor, keep the slots the setters close
+// over) — the same technique the menu-row hover assertions use.
+hookCursor = 0
+effectQueue.length = 0
+const measuredTree = expand(sections[0].component({}), 0)
+for (const fn of effectQueue) { try { fn() } catch (e) {} }
+const measuredText = textOf(measuredTree)
+
+ok('measured card reports the session count', /2 个会话/.test(measuredText), measuredText.slice(0, 200))
+ok('measured card reports total size in human units', /11\.0 MB|11 MB/.test(measuredText), measuredText.slice(0, 200))
+ok('measured card reports blob and row totals', /151 个快照文件/.test(measuredText) && /268 条记录/.test(measuredText), measuredText.slice(0, 200))
+ok('measured card reports the elapsed time', /统计耗时 62 ms/.test(measuredText), measuredText.slice(0, 200))
+ok('measured card names the largest session', /最大一项：Big chat/.test(measuredText), measuredText.slice(0, 200))
+ok('measured card lists both sessions', /Big chat/.test(measuredText) && /Small chat/.test(measuredText))
+ok('measured card warns what deletion costs', /撤销到某一轮/.test(measuredText))
+ok('measured card does NOT re-scan after rendering the result',
+  fetchCalls.filter((c) => String(c.url).endsWith('/snapshot-usage')).length - settingsBefore === 1,
+  String(fetchCalls.filter((c) => String(c.url).endsWith('/snapshot-usage')).length - settingsBefore))
+
+// Nothing is selected yet, so the delete path must be disabled.
+const dryBtnIdle = findButtonByText(measuredTree, /试算删除/)
+ok('delete is disabled until something is selected', dryBtnIdle !== null && dryBtnIdle.props.disabled === true)
+ok('card says what to do when nothing is selected', /先勾选要删的会话/.test(measuredText))
+
+// Tick the first row, re-render, and the delete button must wake up.
+const box = findCheckbox(measuredTree)
+ok('each ledger row carries a checkbox', box !== null && typeof box.props.onChange === 'function')
+box?.props?.onChange?.()
+hookCursor = 0
+effectQueue.length = 0
+const pickedTree = expand(sections[0].component({}), 0)
+for (const fn of effectQueue) { try { fn() } catch (e) {} }
+const pickedText = textOf(pickedTree)
+ok('picking a row enables the dry run', /已选 1 个/.test(pickedText), pickedText.slice(0, 200))
+
+// Dry run first — the host must be asked for a PLAN, never a deletion.
+const dryBtn = findButtonByText(pickedTree, /试算删除/)
+snapshotCleanupRequests.length = 0
+dryBtn?.props?.onClick?.()
+await settle()
+ok('dry run posts a plan request', snapshotCleanupRequests.length === 1, String(snapshotCleanupRequests.length))
+ok('dry run sends dryRun:true and confirm:false',
+  snapshotCleanupRequests[0]?.dryRun === true && snapshotCleanupRequests[0]?.confirm === false,
+  JSON.stringify(snapshotCleanupRequests[0]))
+ok('dry run sends exactly the ticked session id',
+  JSON.stringify(snapshotCleanupRequests[0]?.sessionIds) === JSON.stringify(['session-big']),
+  JSON.stringify(snapshotCleanupRequests[0]?.sessionIds))
+
+hookCursor = 0
+effectQueue.length = 0
+const confirmTree = expand(sections[0].component({}), 0)
+for (const fn of effectQueue) { try { fn() } catch (e) {} }
+const confirmText = textOf(confirmTree)
+ok('dry run result is labelled as no-change', /试算结果，未做任何修改/.test(confirmText), confirmText.slice(0, 240))
+ok('a confirmation prompt appears before deleting', /确认删除这 1 个会话的快照/.test(confirmText), confirmText.slice(0, 240))
+ok('confirmation says the recycle bin is used', /回收站/.test(confirmText))
+ok('confirmation states the real blast radius', /对话和磁盘文件都还在/.test(confirmText))
+
+// Only the explicit confirm may send dryRun:false.
+const confirmBtn = findButtonByText(confirmTree, /确认删除/)
+snapshotCleanupRequests.length = 0
+confirmBtn?.props?.onClick?.()
+await settle()
+ok('confirm sends dryRun:false and confirm:true',
+  snapshotCleanupRequests.length === 1 &&
+  snapshotCleanupRequests[0]?.dryRun === false &&
+  snapshotCleanupRequests[0]?.confirm === true,
+  JSON.stringify(snapshotCleanupRequests[0]))
+ok('cancel button is offered next to confirm', findButtonByText(confirmTree, /取消/) !== null)
+
+// The card must never fetch on its own again — no polling, no interval.
+const totalScans = fetchCalls.filter((c) => String(c.url).endsWith('/snapshot-usage')).length - settingsBefore
+ok('the card never scans without a button press', totalScans <= 2, String(totalScans))
 
 // ---------------------------------------------------------------------------
 // Summary
