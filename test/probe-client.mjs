@@ -2236,8 +2236,31 @@ function findArchiveSwitch(tree) {
  * therefore returns the wrong card, which is invisible until you notice the
  * request went to the other route. Every button below is scoped this way.
  */
+/** The panel that carries `key` (0.32.0 turns the section into tabs). */
+function panelOf(tree, key) {
+  const kids = Array.isArray(tree?.children) ? tree.children : []
+  for (const kid of kids) {
+    if (!kid || typeof kid !== 'object') continue
+    const props = kid.props || {}
+    if (props['data-aff-panel'] === key) return kid
+  }
+  return null
+}
+/**
+ * 0.32.0: the section now renders a tab bar whose labels repeat every card
+ * title (超时归档 / 归档清理 / 快照占用 …). A plain "first child whose text
+ * matches" search therefore resolves to the TAB BAR, and every button lookup
+ * scoped through it comes back empty. Panels are checked first so a marker
+ * still resolves to the card that owns it.
+ */
 function cardContaining(tree, markerRe) {
   const kids = Array.isArray(tree?.children) ? tree.children : []
+  for (const kid of kids) {
+    if (!kid || typeof kid !== 'object') continue
+    const props = kid.props || {}
+    const key = props['data-aff-panel']
+    if (key && markerRe.test(textOf(kid))) return kid
+  }
   for (const kid of kids) {
     if (kid && typeof kid === 'object' && markerRe.test(textOf(kid))) return kid
   }
@@ -2251,6 +2274,46 @@ const settingsTree = expand(sections[0].component({}), 0)
 for (const fn of effectQueue) { try { fn() } catch (e) {} }
 
 ok('settings page shows the snapshot-usage card', /快照占用/.test(textOf(settingsTree)))
+
+// --- 0.32.0: one function switcher, one panel on screen -------------------
+function tabButtons(tree) {
+  const out = []
+  ;(function walk(node) {
+    if (!node || typeof node !== 'object') return
+    if (Array.isArray(node)) { for (const c of node) walk(c); return }
+    if (node.type === 'button' && node.props && node.props.role === 'tab') out.push(node)
+    for (const c of node.children ?? []) walk(c)
+  })(tree)
+  return out
+}
+function visiblePanels(tree) {
+  const kids = Array.isArray(tree?.children) ? tree.children : []
+  return kids.filter((k) => k && typeof k === 'object' && (k.props || {})['data-aff-panel'])
+}
+const tabNodes = tabButtons(settingsTree)
+ok('the section renders a function switcher', tabNodes.length === 5,
+  JSON.stringify(tabNodes.map((b) => textOf(b))))
+ok('the switcher names all five functions',
+  ['超时归档', '归档清理', '快照占用', '收藏列表', '未分组体检'].every((label) =>
+    tabNodes.some((b) => textOf(b).indexOf(label) >= 0)),
+  JSON.stringify(tabNodes.map((b) => textOf(b))))
+const panels = visiblePanels(settingsTree)
+ok('every function gets exactly one panel', panels.length === 5,
+  JSON.stringify(panels.map((p) => p.props['data-aff-panel'])))
+ok('exactly one panel is visible at a time',
+  panels.filter((p) => (p.props.style || {}).display !== 'none').length === 1,
+  JSON.stringify(panels.map((p) => [p.props['data-aff-panel'], (p.props.style || {}).display])))
+ok('the first function is the one that opens',
+  panels.findIndex((p) => (p.props.style || {}).display !== 'none') === 0,
+  JSON.stringify(panels.map((p) => p.props['data-aff-panel'])))
+ok('the open tab is marked selected',
+  tabNodes.filter((b) => b.props['aria-selected'] === 'true').length === 1,
+  JSON.stringify(tabNodes.map((b) => [textOf(b), b.props['aria-selected']])))
+ok('switching tabs does not unmount the other panels',
+  panels.length === 5)
+ok('the switcher remembers the choice via localStorage',
+  source.includes('dsh-aff-settings-view'),
+  'client.js does not persist the selected view')
 
 // 🔴 The constraint: rendering is IDLE. Nothing may have been measured yet.
 const scansOnRender = fetchCalls.filter((c) => String(c.url).endsWith('/snapshot-usage')).length - settingsBefore

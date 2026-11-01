@@ -51,6 +51,12 @@ so it composes with the shipped UI instead of patching it.
 
 ## Features · At a glance
 
+> Every feature below marked "Settings → Archive favourites" lives behind a
+> **single row of function buttons** on one page: pick 超时归档 / 归档清理 /
+> 快照占用 / 收藏列表 / 未分组体检 and only that panel is shown. The other
+> panels are hidden, not unmounted, so a report you just measured is still
+> there when you come back. The choice is remembered across restarts.
+
 | | 中文 | English |
 |---|---|---|
 | ① | **收藏对话**：归档或未归档的对话都能收藏；「…」菜单项 + 行内 ☆，星标即时生效 | **Favourite any conversation** — archived or not; a menu row plus an inline ☆ star, applied optimistically |
@@ -411,6 +417,16 @@ auto-delete.
 - **The delete is permanent and does NOT use the recycle bin.** It removes the
   conversation together with its transcript — unlike deleting a ledger, which
   leaves the conversation and the files alone. The confirmation says so.
+
+### Limits of the settings switcher
+
+- The five functions are five PANELS of one page, not five routes: the address
+  does not change, and a reload lands on the last panel thanks to
+  `dsh-aff-settings-view` in `localStorage`.
+- Clearing site data (or switching profile) falls back to the first panel
+  (超时归档). Nothing is lost — the fallback is a view, not data.
+- Hidden panels stay mounted. Measure the snapshot usage, switch to another
+  panel, come back: the report is still on screen.
 
 ### Limits of the Ungrouped health check
 
