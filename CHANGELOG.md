@@ -4,6 +4,85 @@ All notable changes to this project are documented here.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 this project uses [Semantic Versioning](https://semver.org/).
 
+## 0.28.9 — 2026-11-01
+
+### 修复：会话菜单里插件的行没有 hover 高亮（issue #1）
+
+报告（@ripley-xl）：官方菜单行（置顶会话 / 重命名 / 分叉 / 归档）鼠标移上去会浮出
+一层浅灰背景，危险项是淡红；而本插件插入的那几行 —— 「收藏对话」「复制 ID + 路径」
+「新窗口继续对话」，以及同一 `MenuRow` 渲染的「删除对话」—— 移上去背景纹丝不动，
+看着不像真菜单项。
+
+**根因：类名是字面量，官方是 CSS Modules 哈希名。**
+
+`MenuRow` 当初写的是：
+
+```jsx
+className: "itemWrap"
+className: props.danger ? "item danger" : "item"
+```
+
+并附了一句注释断言「The class names below are the official ones」。**这句话是错的。**
+官方前端是 CSS Modules 打包的，发布产物里这些名字都被哈希过。对照实际发货的
+`index-BNyAYEM7.css` 实测：
+
+| 插件里写的字面量 | 发货产物里真实存在的类名 |
+|---|---|
+| `itemWrap` | `_itemWrap_4ub78_90` |
+| `item` | `_item_4ub78_90` |
+| `itemIcon` | `_itemIcon_4ub78_148` |
+| `itemLabel` | `_itemLabel_4ub78_190` |
+| `label` | `_label_4ub78_129` |
+| `danger` | `_danger_4ub78_226` |
+
+字面量匹配不到任何规则。这些行之所以**布局还是对的**，是因为每条规则同时被写成了
+inline style —— 于是问题被完美掩盖，只在高亮上露头。
+
+**第二层原因（就算前一条修好也还高亮不了）：inline `background` 压掉 `:hover`。**
+
+```js
+background: "transparent"   // inline style 的优先级高于任何样式表规则
+```
+
+官方那层 hover 背景来自 `._item_4ub78_90:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}`。
+行内 `background` 是 inline style，优先级高于样式表 —— 所以哪怕把哈希类名补上，
+或者往插件自己的 `<style>` 里补一条 `:hover`，也照样被压掉（除非 `!important`）。
+
+**修法：hover 颜色交给 React state，类名换自己的。**
+
+| 位置 | 旧 | 新 |
+|---|---|---|
+| 类名 | 官方字面量 `itemWrap` / `item` / `itemIcon` / `itemLabel` / `label` | 自有 `dsh-aff-mi-wrap` / `dsh-aff-mi`（danger 追加 `dsh-aff-mi-danger`）/ `dsh-aff-mi-icon` / `dsh-aff-mi-label` / `dsh-aff-mi-caption` |
+| hover 来源 | 期望继承官方样式表 | `onMouseEnter` / `onMouseLeave` 改 `hovered` state，动态算 `background` |
+| 键盘可达 | 无 | `onFocus` 判 `:focus-visible` → `focusVisible` state；`onBlur` 清 |
+| 背景色 | 写死 `"transparent"` | 静止 `transparent`；悬停 `var(--dsw-alias-interactive-bg-hover, rgba(127,127,127,.14))`，危险项 `var(--dsw-alias-interactive-bg-hover-danger, rgba(255,107,107,.16))` |
+| 危险色 | 写死 `#ff6b6b` | `var(--dsw-alias-state-error-primary, #ff6b6b)` |
+| 过渡 | 无 | `transition: background-color .12s ease`（官方行是渐变的，瞬亮显得像闪一下） |
+| 布局 | inline | **仍然 inline** —— 不依赖任何样式表，宿主换主题/改产物都不影响 |
+
+两类状态分开存（`hovered` / `focusVisible`）是刻意的：鼠标点击会让按钮 focus 但
+不匹配 `:focus-visible`，混成一个 state 会导致点过的行一直亮着；反过来只判 hover
+又会让键盘 Tab 过来没有反馈。
+
+顺带修掉 4 处**无效 token**：`--dsw-alias-state-warning-primary` 在
+`@deepseek-ai/dsh-client-ui-theme` 的 403 个 token 里**不存在**（真名是
+`--dsw-alias-state-warn-primary`）。这 4 处（星标颜色 / ADVISE_COLOR.archive /
+未分组摘要 / 批量删除告警）一直只靠 `#ffb454` 兜底，颜色永不跟随主题。
+
+**探针同源修复**
+
+`test/probe-client.mjs` 原来的 `assertMenuRowStructure()` **断言字面量
+`itemWrap` / `item` / `itemLabel`** —— 也就是说这套测试把 bug 锁死了：谁想改成
+正确写法，测试先红。现在改成反向断言（`HASHED_OFFICIAL_CLASSES` 出现即 FAIL）
+并新增 4 组行为断言：静止 `background === "transparent"`、行上有
+`onMouseEnter`/`onMouseLeave`、悬停后 `background` 含对应 token、移出恢复
+`transparent`。
+
+**验证**：四套探针 client 232 + filehistory 39 + ungrouped-guard 86 + digest 58 =
+**415 条全绿**；`node --check` 三个 lib 文件通过。
+
+---
+
 ## 0.28.8 — 2026-10-30
 
 ### 修复：空白会话被误报成「未分组」

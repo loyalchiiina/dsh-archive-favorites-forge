@@ -642,59 +642,137 @@ ok('no separate copy-path row is registered', menuTexts['aff-copy-path'] === und
 
 // 🔴 The regression test for the bug that made every menu row invisible.
 //
-// `Menu` renders its `children` directly into a flex-column `.viewport`, where
-// every row it draws itself is `div.itemWrap > button.item`. A bare `<button>`
-// dropped in beside those collapses to almost nothing, so the row exists in the
-// tree but cannot be seen or clicked. Assert the wrapper AND the class names.
+// `Menu` renders its `children` directly into a flex-column viewport, where
+// every row it draws itself is a wrapper div around a full-width flex button.
+// A bare `<button>` dropped in beside those collapses to almost nothing, so the
+// row exists in the tree but cannot be seen or clicked. Assert the wrapper, the
+// button, and the label span.
+//
+// 🔴 SECOND REGRESSION, and the one this suite previously MISSED: the row used
+// to copy the shipped menu's class names (`itemWrap`, `item`, `itemLabel`).
+// Those are CSS Module names, hashed to `_item_4ub78_90` in a real build, so the
+// literals matched nothing — and the row's inline `background: transparent` beat
+// every `:hover` rule short of `!important`. The result had correct layout and
+// NO hover highlight, which is what users reported. The old assertions here
+// actively locked the bug in by demanding those literal names. They now demand
+// the opposite, plus the behaviour that was actually missing: paint on hover.
 //
 // `aff-delete` is skipped in the first pass: it renders nothing until the
 // archived set has arrived, so it gets its own pass once the fetch has settled.
 const structureEntries = menuItems.filter((e) => e.id !== 'aff-delete')
 
-function assertMenuRowStructure(entry, tree, label) {
+/** The shipped CSS Modules names that must NEVER be matched literally. */
+const HASHED_OFFICIAL_CLASSES = ['itemWrap', 'itemLabel', 'itemIcon']
+
+function findRowButton(tree) {
+  if (tree === null || tree === undefined) return null
+  const kids = tree.children ?? []
+  return kids.find((c) => c !== null && c !== undefined && c.type === 'button') ?? null
+}
+
+/**
+ * Assert one menu row's structure AND its hover paint.
+ *
+ * The hover half re-renders the SAME component instance with the hook slots
+ * kept in place (only the cursor is rewound), which is what models React
+ * re-rendering after `setHovered(true)` rather than remounting the component.
+ */
+function assertMenuRowStructure(entry, tree, label, props) {
   const wrapped = tree !== null && tree !== undefined && tree.type === 'div' &&
-    typeof tree.props?.className === 'string' && tree.props.className.includes('itemWrap')
-  ok('menu row is wrapped in div.itemWrap: ' + label, wrapped,
+    typeof tree.props?.className === 'string' &&
+    tree.props.className.split(/\s+/).indexOf('dsh-aff-mi-wrap') >= 0
+  ok('menu row is wrapped in div.dsh-aff-mi-wrap: ' + label, wrapped,
     tree === null || tree === undefined ? 'null' : String(tree.type) + ' . ' + String(tree.props?.className))
 
-  const btn = wrapped ? (tree.children ?? []).find((c) => c !== null && c !== undefined && c.type === 'button') : null
-  ok('menu row has a button.item with role=menuitem: ' + label,
+  const btn = wrapped ? findRowButton(tree) : null
+  const btnClasses = btn === null || btn === undefined ? '' : String(btn.props.className ?? '')
+  ok('menu row has a button.dsh-aff-mi with role=menuitem: ' + label,
     btn !== null && btn !== undefined &&
     btn.props.role === 'menuitem' &&
-    String(btn.props.className).includes('item'),
+    btnClasses.split(/\s+/).indexOf('dsh-aff-mi') >= 0,
     JSON.stringify({ role: btn?.props?.role, cls: btn?.props?.className }))
 
+  // The bug: matching the hashed official names is a no-op, so their presence
+  // is now itself a failure. Our own markers are what selectors may rely on.
+  ok('menu row does not rely on hashed official class names: ' + label,
+    HASHED_OFFICIAL_CLASSES.every((n) => btnClasses.split(/\s+/).indexOf(n) < 0),
+    btnClasses)
+
   const labelSpan = btn === null || btn === undefined ? null : (btn.children ?? []).find(
-    (c) => c !== null && c !== undefined && c.props && String(c.props.className).includes('itemLabel'))
-  ok('menu row label lives in span.itemLabel: ' + label, labelSpan !== null && labelSpan !== undefined)
+    (c) => c !== null && c !== undefined && c.props &&
+      String(c.props.className ?? '').split(/\s+/).indexOf('dsh-aff-mi-label') >= 0)
+  ok('menu row label lives in span.dsh-aff-mi-label: ' + label, labelSpan !== null && labelSpan !== undefined)
+
+  // HOVER PAINT — the actual reported symptom.
+  const restingBg = btn === null || btn === undefined ? '' : String(btn.props.style?.background ?? '')
+  ok('menu row starts with no background paint: ' + label,
+    restingBg === 'transparent', restingBg)
+
+  ok('menu row handles mouse enter: ' + label,
+    btn !== null && typeof btn.props.onMouseEnter === 'function')
+  ok('menu row handles mouse leave: ' + label,
+    btn !== null && typeof btn.props.onMouseLeave === 'function')
+
+  if (btn === null || btn === undefined || props === undefined ||
+      typeof btn.props.onMouseEnter !== 'function') return
+
+  // Re-render in place: rewind the cursor, keep the slots the setters close over.
+  btn.props.onMouseEnter()
+  hookCursor = 0
+  effectQueue.length = 0
+  const hovered = expand(entry.component(props), 0)
+  const hoveredBtn = findRowButton(hovered)
+  const hoveredBg = hoveredBtn === null ? '' : String(hoveredBtn.props.style?.background ?? '')
+  ok('menu row paints a hover background: ' + label,
+    hoveredBg !== 'transparent' && hoveredBg !== '',
+    hoveredBg)
+
+  const danger = hoveredBtn !== null &&
+    String(hoveredBtn.props.className ?? '').split(/\s+/).indexOf('dsh-aff-mi-danger') >= 0
+  const expectedToken = danger
+    ? '--dsw-alias-interactive-bg-hover-danger'
+    : '--dsw-alias-interactive-bg-hover'
+  ok('hover background uses the ' + (danger ? 'danger' : 'normal') + ' theme token: ' + label,
+    hoveredBg.indexOf(expectedToken) >= 0,
+    hoveredBg + ' (expected ' + expectedToken + ')')
+
+  // Mouse leave must restore the resting state, or the row stays lit.
+  if (hoveredBtn !== null && typeof hoveredBtn.props.onMouseLeave === 'function') {
+    hoveredBtn.props.onMouseLeave()
+    hookCursor = 0
+    effectQueue.length = 0
+    const left = expand(entry.component(props), 0)
+    const leftBtn = findRowButton(left)
+    ok('menu row drops the hover background on leave: ' + label,
+      leftBtn !== null && String(leftBtn.props.style?.background ?? '') === 'transparent',
+      leftBtn === null ? 'no button' : String(leftBtn.props.style?.background ?? ''))
+  }
 }
 
 for (const entry of structureEntries) {
-  const { tree } = renderOne(entry, emptyProps().props)
-  assertMenuRowStructure(entry, tree, entry.id)
+  const p = emptyProps().props
+  const { tree } = renderOne(entry, p)
+  assertMenuRowStructure(entry, tree, entry.id, p)
 }
 
 // `aff-delete` renders only for an ARCHIVED, UNFAVOURITED session. Render it
 // once to fire its `/archived` request, let that settle, then re-render.
 {
   const deleteEntryForStructure = menuItems.find((e) => e.id === 'aff-delete')
-  resetHooks()
-  deleteEntryForStructure.component({
+  const deleteProps = {
     sessionId: 'session-plain-1',
     displayTitle: 'A plain chat',
     useMenuOpenState: () => [false, () => {}],
-  })
+  }
+  resetHooks()
+  deleteEntryForStructure.component(deleteProps)
   for (const fn of effectQueue) { try { fn() } catch (e) {} }
   await settle()
   hookCursor = 0
   effectQueue.length = 0
-  const tree = deleteEntryForStructure.component({
-    sessionId: 'session-plain-1',
-    displayTitle: 'A plain chat',
-    useMenuOpenState: () => [false, () => {}],
-  })
+  const tree = deleteEntryForStructure.component(deleteProps)
   const expanded = expand(tree, 0)
-  assertMenuRowStructure(deleteEntryForStructure, expanded, 'aff-delete (archived)')
+  assertMenuRowStructure(deleteEntryForStructure, expanded, 'aff-delete (archived)', deleteProps)
 }
 
 const starEntry = rowActions[0]
