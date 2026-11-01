@@ -158,7 +158,27 @@ ok('first snapshot timestamp comes from the first manifest row', bigEntry.firstS
 ok('last snapshot timestamp comes from the last manifest row', bigEntry.lastSnapshotAt === T2, String(bigEntry.lastSnapshotAt))
 ok('the ledger directory path is reported', bigEntry.dir === big.ledger, bigEntry.dir)
 
+// 0.37.0: measureLedger used to be module-private (reachable only through
+// __internals). The host now imports it directly to fill the archive and idle
+// lists, so it must be a real export — a rename here would break those routes
+// at runtime, not at build time. Asserted here, while the ledger still exists:
+// the cleanup tests below recycle it.
+const directFacts = await usage.measureLedger(big.ledger)
+ok('measureLedger is a real export, not just an internals entry',
+  typeof usage.measureLedger === 'function')
+ok('measureLedger reports the same bytes as the scan',
+  directFacts.bytes === big.blobBytes + big.manifestBytes,
+  String(directFacts.bytes) + ' vs ' + String(big.blobBytes + big.manifestBytes))
+ok('measureLedger reports the blob count the six-column row needs',
+  directFacts.blobCount === 2, String(directFacts.blobCount))
+
 ok('the project name is reported', bigEntry.projectName === '-probe-project', bigEntry.projectName)
+// 0.37.0: every list on the settings page shows a 工作区名称 column, and this is
+// where that cell comes from. The cwd rides along on the SAME cache read that
+// yields the title, so it costs no extra IO — the assertion also pins that the
+// value reaches the entry rather than dying inside metaFromCache.
+ok('the working directory is reported with the title',
+  bigEntry.cwd === 'C:\\probe', JSON.stringify(bigEntry.cwd))
 ok('a cached title is picked up', bigEntry.title === 'Big chat', JSON.stringify(bigEntry.title))
 ok('a session with no cache entry still measures', smallEntry.bytes === small.blobBytes + small.manifestBytes, String(smallEntry.bytes))
 // 0.30.0: session-small now HAS a cache entry (time only, no title), so the
@@ -304,10 +324,15 @@ const noCache = await scanSnapshotUsage({ shared: false })
 ok('the scan survives a missing cache row', noCache.ok === true, JSON.stringify(noCache.detail ?? ''))
 const bigNoCache = __internals.metaFromCache
 ok('metaFromCache is reachable for direct testing', typeof bigNoCache === 'function')
+// 0.37.0: measureLedger is a real export now — see the measurement block above.
+ok('measureLedger is a real export, not just an internals entry',
+  typeof usage.measureLedger === 'function')
 const absentMeta = bigNoCache(projCache, 'session-does-not-exist')
 ok('an unknown session yields no title', absentMeta.title === '', JSON.stringify(absentMeta.title))
 ok('an unknown session yields a NULL age, not zero',
   absentMeta.lastActivityAt === null, String(absentMeta.lastActivityAt))
+ok('an unknown session yields an empty cwd, not undefined',
+  absentMeta.cwd === '', JSON.stringify(absentMeta.cwd))
 
 console.log('\n--- pre-selection threshold ---')
 

@@ -63,10 +63,10 @@ so it composes with the shipped UI instead of patching it.
 | ① | **收藏对话**：归档或未归档的对话都能收藏；「…」菜单项 + 行内 ☆，星标即时生效 | **Favourite any conversation** — archived or not; a menu row plus an inline ☆ star, applied optimistically |
 | ② | **复制 ID + 路径**：「…」菜单一键复制会话 ID 与转录文件绝对路径（两行） | **Copy id + path** — one menu row copying the session id and the transcript's absolute path |
 | ③ | **单条永久删除**：任意非收藏对话可删，二次确认；删完侧栏**立即移除该行** | **Per-conversation permanent delete** — any non-favourite, behind a confirmation, and the sidebar row disappears at once |
-| ④ | **批量归档闲置对话**：把闲置超过 N 小时的未归档对话一次性归档，可撤回；**候选直接列在卡片里**（闲置时长 + 标题 + 工作区），不必先导出清单才知道要归档什么 | **Idle batch archive** — archives conversations quiet for more than N hours, undoable; the candidates are **listed right in the card** (idle time, title, workspace), so you never have to export a list just to see what would be archived |
+| ④ | **批量归档闲置对话**：把闲置超过 N 小时的未归档对话一次性归档，可撤回；**候选直接列在卡片里**（统一六列，见 ⑱），不必先导出清单才知道要归档什么 | **Idle batch archive** — archives conversations quiet for more than N hours, undoable; the candidates are **listed right in the card** in the shared six columns (see ⑱), so you never have to export a list just to see what would be archived |
 | ⑤ | **导出清单**：制表符分隔的 txt，含**对话名称 / 对话ID / 所属工作区 / 闲置时长 / 最后活动时间**；可复制路径或直接打开所在文件夹 | **Export list** — a tab-separated txt with name, id, workspace, idle time and last-activity time; copy its path or reveal it in the file manager |
 | ⑥ | **收藏筛选**：视图选项菜单新增「仅显示收藏（已归档）」与「仅显示收藏（未归档）」 | **Favourites filter** — view-options rows for favourites that are archived, and favourites that are not |
-| ⑦ | **批量删除**：一键永久删除「已归档且未收藏」的对话 | **Batch delete** — permanently removes the archived-and-unfavourited conversations |
+| ⑦ | **批量删除**：一键永久删除「已归档且未收藏」的对话，清单用统一六列（见 ⑱） | **Batch delete** — permanently removes the archived-and-unfavourited conversations; the list uses the shared six columns (see ⑱) |
 | ⑧ | **删除护栏**：收藏项拒删、越出会话根目录拒删、符号链接拒删、逐条报告、批量上限 | **Delete guardrails** — favourites refused, paths outside the sessions root refused, symlinks refused, per-id reporting, batch cap |
 | ⑨ | **编辑重发**：任意一条用户消息下多一个 ✏️，点开就是内联编辑框（可拖入文件 / 粘贴图片，最多 10 个附件、单个 8MB），发送即截断到该消息之前并重发 | **Edit and resend** — a ✏️ under any user message opens an inline editor (drag files or paste images, 10 attachments max, 8 MB each); sending truncates the conversation to just before that message and resends |
 | ⑩ | **撤销整轮**：↺ 把对话回退到该轮之前，并**默认同时还原这一轮里被 AI 改过的文件**（确认框里列出将被回滚的路径，可取消勾选只回退对话） | **Undo a turn** — ↺ rewinds the conversation to before that turn and, by default, also **restores the files the assistant changed during it** (the confirm dialog lists the affected paths; untick to rewind the conversation only) |
@@ -76,14 +76,15 @@ so it composes with the shipped UI instead of patching it.
 | ⑭ | **孤儿缓存清理**：清掉「会话目录已不在、但投影缓存还留着」的孤儿记录——这是「未分组」清完又冒出来的真正原因，目录扫描看不见它。**0.36.0 起默认全部可删**，要保留置顶/已归档那几条就勾一个框 | **Ghost-cache sweep** — removes orphan projection records whose session directory is long gone; this is why the bucket keeps reappearing and no directory scan can see it. **Everything is deletable by default since 0.36.0**; tick one box to spare the pinned / archived rows |
 | ⑮ | **隐藏「未分组」分组**：一个纯视图开关（**默认开启**），把侧栏底部那个分组（连组头）整体藏起来，不删任何对话 | **Hide the "Ungrouped" group** — a pure view switch (**on by default**) that hides the whole bucket (header and rows) from the sidebar; nothing is deleted |
 | ⑯ | **新窗口继续对话**：把长对话蒸馏成一份交接书（用户要求时间线 + 任务进度清单 + 团队任务 + 最近进展），先弹窗报告「检测到任务进行到 第 N 轮」，确认后新开一个 `新对话-<原名>`、**继承原对话的预设智慧体**并自动把交接书发过去 | **Continue in a new window** — distils a long conversation into a handover brief (requirement timeline, task progress, team tasks, latest progress), reports "you are N turns in" first, then on confirm opens `新对话-<original title>` with the **original agent preset inherited** and sends the brief as its first message |
-| ⑰ | **快照清理（统计 + 手动删除）**：设置页「快照清理」栏点「立即统计」才扫一次（渲染时不扫、无定时器），列出每个会话 `history-file/` 占了多少、多少个快照文件、多少条记录、**不活跃时长**；**收藏的会话不进可删列表**，只在汇总行单独报；可选打开「超时预勾选」（默认关，开前须确认风险）自动勾上超时行，删除仍需先试算再二次确认，删的目录进 Windows 回收站。**绝不自动清理** | **Snapshot usage & manual cleanup** — one press of "measure now" scans the ledger directories once (never on render, never on a timer), reporting bytes, blob count, row count, **idle time and last snapshot time** per conversation; **favourited conversations are lifted out of the cleanup list** and reported on a separate summary line; an optional "pre-tick idle rows" switch (off by default, risk acknowledgement required) ticks rows past the threshold after each scan; deletion still needs a dry run plus a confirm, and the directory goes to the recycle bin. **Nothing is ever pruned automatically** |
+| ⑰ | **快照清理（统计 + 手动删除）**：设置页「快照清理」栏点「立即统计」才扫一次（渲染时不扫、无定时器），列出每个会话 `history-file/` 占了多少、多少个快照文件、多少条记录、**不活跃时长**；**收藏的会话不进可删列表**，只在汇总行单独报；可选打开「超时预勾选」（默认关，开前须确认风险）自动勾上超时行，删除仍需先试算再二次确认，删的目录进 Windows 回收站。**绝不自动清理** | **Snapshot usage & manual cleanup** — one press of "measure now" scans the ledger directories once (never on render, never on a timer), reporting bytes, blob count, row count, **idle time and last snapshot time** per conversation, in the shared six columns (see ⑱); **favourited conversations are lifted out of the cleanup list** and reported on a separate summary line; an optional "pre-tick idle rows" switch (off by default, risk acknowledgement required) ticks rows past the threshold after each scan; deletion still needs a dry run plus a confirm, and the directory goes to the recycle bin. **Nothing is ever pruned automatically** |
+| ⑱ | **列表统一六列**：**每一栏**的列表都是同一套列 —— `文件大小 \| 时长 \| 对话名称 \| 文件数量 \| 工作区名称 \| 时间`，由一个共用行组件渲染，缺失值统一显示破折号而不是留空（详见 "The six-column row format"）；文件大小与文件数量取自各会话的快照账本，且**只在你点开那一栏时才量**，单次上限 120 行、并发 8 | **One row format everywhere** — every list on the page uses the same six columns (`文件大小 \| 时长 \| 对话名称 \| 文件数量 \| 工作区名称 \| 时间`), drawn by a single shared row component, with an em dash for a cell that genuinely has no value instead of a blank one; size and file count come from each session's snapshot ledger and are measured **only when you open that panel**, capped at 120 rows per request with a fan-out of 8 |
 
 ### Where each feature lives
 
 | Feature | UI location |
 |---|---|
 | Favourite / copy / delete one conversation | Sidebar row 「…」 menu (and a hover ☆ on the row) |
-| Idle batch archive, export list, favourites list, **batch delete of archived conversations (inlined list, per-row ticks, dry run → confirm, its own pre-tick switch)**, **ungrouped health check**, **orphan cache sweep** | **Settings → 归档助手** |
+| Idle batch archive, export list, favourites list, **batch delete of archived conversations (inlined list, per-row ticks, dry run → confirm, its own pre-tick switch)**, **ungrouped health check**, **orphan cache sweep**, **the six-column row format used by every list** | **Settings → 归档助手** |
 | Favourites filter | **视图选项 → 筛选会话** |
 | Edit-resend / undo turn / delete one message | The ↺ ✏️ 🗑 buttons under each **user** message in the transcript |
 | Undo and edit confirmation | A modal (`shell.overlay`) — the only place the plugin draws outside the sidebar |
@@ -472,6 +473,22 @@ this card archives also has its `history-file/` ledger sent to the Windows recyc
   The three heavy inspectors — snapshot scan, ungrouped diagnosis, orphan-cache
   scan — each own a button inside their card. Refreshing never runs them, and
   nothing on this page ever scans the disk on its own.
+
+### The six-column row format (since 0.37.0)
+
+**Every list** on the settings page — 快照清理, 删除归档, the idle candidates in 批量归档, 未分组体检, 孤儿缓存, 收藏清单 — renders through the same six columns, always in this order:
+
+```
+文件大小 | 时长 | 对话名称 | 文件数量 | 工作区名称 | 时间
+```
+
+One `SessionRow` component draws every row; one `ListHead` component draws every caption (the column names live in the `LIST_COLUMNS` constant). No panel builds its own columns, so the same conversation looks the same wherever you meet it.
+
+- **The dash is not decoration.** A cell that genuinely has no data prints `—` — it is not left blank and the column is not dropped. A blank cell pushes every later column one slot to the left, which is exactly how two lists end up looking like two different schemas.
+- **The dash is a promise.** No cell is ever filled by scanning the disk behind your back. For real numbers, press that card's own button (立即统计 / 诊断 / 扫描) or just open the panel.
+- What each column means: **文件大小** = bytes in that session's `history-file` snapshot ledger (a dash when it never wrote one); **时长** = how long ago the 时间 stamp is, tinted when it passes the card's threshold; **文件数量** = snapshot blob count; **工作区名称** = last path segment of the session's cwd; **时间** = last snapshot write (archive/idle rows use the conversation's update time, 未分组 uses creation time, favourites use the starred moment).
+
+**Cost policy (do not relax it).** The archive and idle lists used to know only a title and a timestamp. Since 0.37.0 they measure the ledger — but only when you open that panel or press its button, at most 120 rows per request (the page renders 60, so the cap is invisible), with a fixed fan-out of 8 because measuring a ledger stats every blob. The plugin never scans on its own.
 
 ### Limits of the Ungrouped health check
 

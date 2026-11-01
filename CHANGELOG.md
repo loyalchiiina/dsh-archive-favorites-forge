@@ -4,6 +4,103 @@ All notable changes to this project are documented here.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 this project uses [Semantic Versioning](https://semver.org/).
 
+## 0.37.0 — 2026-11-01
+
+### 七处列表统一成同一套六列
+
+用户的要求原话：「所有的列表都必须有 文件大小 / 时长 / 对话名称 / 文件数量 / 工作区名称 / 时间，全部统一格式」，随后补充「每一栏的列表统一格式显示我刚才说的」。
+
+改造前，同一个对话在不同栏里长得像不同的一条记录：
+
+| 栏 | 文件大小 | 时长 | 名称 | 文件数量 | 工作区 | 时间 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0.36.0 快照清理 | 有 | 有 | 有 | 有 | **没有** | 有 |
+| 0.36.0 删除归档 | **空字符串** | 有 | 有 | 没有 | 有 | 有 |
+| 0.36.0 批量归档 | 没有 | 相对（「40 天前」） | 有 | 没有 | 有 | **没有绝对时间** |
+| 0.36.0 未分组体检 | 有（会话日志） | 没有 | 有（另起一行的句子里） | 没有 | 有 | 没有 |
+| 0.36.0 孤儿缓存 | 有 | 没有 | 有（句子里） | 没有 | 有 | 没有 |
+| 0.36.0 收藏清单 | 没有 | 没有 | 有 | 没有 | 没有 | 没有 |
+| **0.37.0 全部七处** | 有或破折号 | 有或破折号 | 有 | 有或破折号 | 有或破折号 | 有或破折号 |
+
+### 一个行组件，不是五份拷贝
+
+`lib/client.js` 新增共用渲染层（在 `lastFolder()` 之后），任何列表都不再自己拼列：
+
+```js
+var DASH = "—";
+var LIST_COLUMNS = ["文件大小", "时长", "对话名称", "文件数量", "工作区名称", "时间"];
+var COL_SIZE = { flex: "0 0 auto", width: "68px" };
+var COL_IDLE = { flex: "0 0 auto", width: "62px", textAlign: "right" };
+var COL_COUNT = { flex: "0 0 auto", width: "66px", textAlign: "right" };
+var COL_WORKSPACE = { flex: "0 1 auto", minWidth: 0, maxWidth: "24%", /* ellipsis */ };
+var COL_WHEN = { flex: "0 0 auto", width: "96px", textAlign: "right" };
+
+function dashOr(text)      // 空 -> 破折号，绝不返回空白单元格
+function countText(n)      // n<=0 或非数字 -> ""（由 dashOr 补破折号），否则 "N 个文件"
+function msOfIso(value)    // ISO 字符串 -> epoch ms 或 null
+function ageMsOf(ms)       // 绝对时间戳 -> Date.now()-ms 或 null
+function ListHead(props)   // 列标题行；props.lead 时留 13px 给勾选框
+function SessionRow(props) // 一行 = lead? | 大小 | 时长 | 名称 | 文件数 | 工作区 | 时间 | tail?
+```
+
+**破折号不是装饰。** 一个格子里真的没有数据时打印 `—`，而不是留空或整列省略 —— 空格子会把后面每一列往左挤一格，这正是两套列表最后长得像两套不同 schema 的原因。破折号同时是一个承诺：**没有任何格子是靠偷偷扫盘填出来的**（见「快速上手」栏）。
+
+改造覆盖的七处：
+
+- `PreTickPanel` 的 `p-list`（快照清理 / 删除归档两个勾选表共用）
+- `SnapshotUsageCard.rowsOf`（快照清理）
+- `ArchiveDeleteCard.buildRows`（删除归档，原来 `sizeText` 是空字符串）
+- 批量归档闲置对话的内联候选 `idle-list`（原来是相对年龄，没有绝对时间）
+- `UngroupedCard` 的 `list`（原来「建议：…」独占第二行，现在改成右侧徽章，`title` 里带原因）
+- `GhostCacheBlock` 的 `g-list`（「置顶」/「已归档」改成右侧徽章）
+- 收藏清单 `fav`（原来只有名字和三个按钮）
+
+### 两条列表原来没有真数据，现在补上了
+
+快照清理一直知道字节数和文件数，归档列表和闲置列表只知道标题和时间戳 —— 所以同一行在快照栏有大小、在归档栏是空白。0.37.0 让这两条路由真的去量一次快照账本：
+
+- `lib/snapshot-usage.js`：`measureLedger` 从模块内部函数改为 `export`（原来只能在 `__internals` 里拿到）。
+- `lib/index.js`：新增 `measureLedgersFor(ids, ctx)`，返回 `Map<sessionId, { bytes, blobCount, lastSnapshotAt }>`。
+- `/archived`：每行新增 `bytes` / `blobCount` / `lastSnapshotAt`。
+- `/idle-archive` GET：`sample` 每行新增 `bytes` / `blobCount`（`all` 保持原样，导出文件继续轻量）。
+- `/snapshot-usage`：`metaFromCache` 现在多返回 `cwd`，于是快照行终于有工作区列。这次 `cwd` 来自**同一次文件读取**，没有多一次 IO。
+
+**成本政策（不可放宽）**：`MAX_LEDGER_ROWS = 120`、`LEDGER_FANOUT = 8`。`measureLedgersFor` 永远只在 `/archived` 与 `/idle-archive` 被用户点开时调用，绝不自己跑；单次最多量 120 行（页面只渲染 60 行，所以上限看不见），其余行打印破折号；并发扇出固定 8，因为量一个账本要 stat 每个 blob。这条与 0.29.0 的「不得实时统计」硬约束一致：重活只在用户主动点击时发生。
+
+### 顺修
+
+- `lib/client.js` `var SUBTLE_STYLE` 缺 4 空格缩进（0.36.0 引入的格式瑕疵）。
+
+### 探针
+
+七套探针 **673 条全绿**（0.36.0 是 662 条）：
+
+| 探针 | 条数 | 覆盖 |
+| --- | --- | --- |
+| `probe-client.mjs` | **339**（+5） | 六列标题顺序、破折号占位、行组件唯一性、列常量 |
+| `probe-snapshot-usage.mjs` | **89**（+6） | `measureLedger` 导出与 `metaFromCache` 的 `cwd` |
+| `probe-filehistory.mjs` | 39 | 快照账本读写 |
+| `probe-ungrouped-guard.mjs` | 86 | 未分组 / 孤儿缓存判定 |
+| `probe-digest.mjs` | 58 | 摘要 |
+| `probe-sidebar-watch.mjs` | 43 | 侧栏归档监听 |
+| `probe-delete-ledger.mjs` | 19 | 删除必连带删快照 |
+
+`probe-client` 新增的五条断言，每条都为防一种回归：
+
+- `probe-snapshot-usage` 新增六条，断言 `measureLedger` 是真导出（不是只在 `__internals` 里）且量出的 `bytes`/`blobCount` 与扫描一致，以及 `metaFromCache` 在会话未知时返回空 `cwd` 而不是 `undefined` —— 这两处正是归档/闲置列表六列的数据来源，改坏了只会在运行时静默变成破折号。
+1. `the ledger list heads the six shared columns` —— 六个列名都在，且顺序严格递增（位置数组逐项比较）。原来只断言卡标题存在，列顺序可以随便改而无人发现。
+2. `a column with no data prints a dash, not an empty cell` —— fixture 的行没有工作区，那一格必须是破折号。
+3. `one row component draws every list` —— `React.createElement(SessionRow,` 至少出现 5 次。防止有人图省事在某一栏手写一份自己的列。
+4. `the six columns come from one caption component` —— `ListHead` 至少 5 次。
+5. `the caption names the six columns in the agreed order` —— 直接断言 `LIST_COLUMNS` 这个常量本身，锁死字面顺序。
+
+同时改了两条旧断言：批量归档候选的年龄列从 `ageLabel`（「40 天前」）换成共用行的 `humanIdle`（「40 天」），断言随之从 `'40 天前'` 改为 `'40 天' && '50 天'` 并新增 `'时长'` 列名检查；第二趟重渲染也必须先 `goToView(..., 'idle')`，因为 0.36.0 起落地页是「快速上手」。
+
+### 升级
+
+- 完全退出 DSH 再重开，宿主才会加载新的 `lib/index.js`（六列与后端补字段都在里面）。
+- 已经停在某一栏的页面无需手动切换：面板仍是惰性挂载，但列宽与列名来自同一个常量。
+
 ## 0.36.0 — 2026-11-01
 
 ### 设置页改名 + 重排：现在叫「归档助手」，六个栏目

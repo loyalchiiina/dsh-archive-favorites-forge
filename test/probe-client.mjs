@@ -1274,15 +1274,21 @@ ok('settings section offers an export-to-txt control',
 // every assertion below fail for a reason that has nothing to do with the code.
 hookCursor = 0
 effectQueue.length = 0
-const idleTree = expand(sectionForSort.component({ close() {} }), 0)
+const idleFresh = expand(sectionForSort.component({ close() {} }), 0)
 for (const fn of effectQueue) { try { fn() } catch (e) {} }
+// 0.37.0: this re-render starts on the landing tab again, so the idle card has
+// to be mounted by pressing its tab — exactly like the first pass above.
+const idleTree = await goToView(idleFresh, 'idle')
 const idleText = textOf(idleTree)
 const idleButtons = collectButtons(idleTree, [])
 
+// 0.37.0: the age column now renders through the shared six-column row, which
+// prints humanIdle("40 天") rather than the old ageLabel("40 天前"). The column
+// heading is 时长 and the unit stays consistent across all seven lists.
 ok('settings section renders the idle candidates inline',
-  idleText.includes('天前'), idleText.slice(0, 400))
+  idleText.includes('40 天') && idleText.includes('50 天'), idleText.slice(0, 400))
 ok('the inline candidates show how stale each one is',
-  idleText.includes('40 天前') && idleText.includes('50 天前'),
+  idleText.includes('时长') && idleText.includes('40 天') && idleText.includes('50 天'),
   idleText.slice(0, 400))
 ok('the inline candidates name the workspace',
   idleText.includes('one') && idleText.includes('two'),
@@ -2514,6 +2520,48 @@ ok('measured card states the favourites carve-out',
   measuredText.slice(0, 300))
 ok('measured card lists both sessions', /Big chat/.test(measuredText) && /Small chat/.test(measuredText))
 ok('measured card warns what deletion costs', /撤销到某一轮/.test(measuredText))
+
+// ---------------------------------------------------------------------------
+// 0.37.0 — every list on the page renders through ONE shared row.
+//
+// The user's ask: 文件大小 / 时长 / 对话名称 / 文件数量 / 工作区名称 / 时间, in
+// that order, in every panel. Before this the snapshot card put size first and
+// the workspace nowhere, the archive card printed a blank size, the idle list
+// printed a relative age and no absolute time, and 未分组 / 孤儿缓存 / 收藏
+// printed a single run-on sentence. Same conversation, five different shapes.
+//
+// Two things are asserted, because either one alone can regress silently:
+//   · the header row exists and names the six columns in order;
+//   · a cell with no data prints 破折号 rather than collapsing the row.
+// ---------------------------------------------------------------------------
+{
+  const snapPanel = panelOf(measuredTree, 'snapshot-usage')
+  const headText = textOf(snapPanel)
+  const order = ['文件大小', '时长', '对话名称', '文件数量', '工作区名称', '时间']
+  const positions = order.map((labelName) => headText.indexOf(labelName))
+  ok('the ledger list heads the six shared columns',
+    positions.every((p) => p >= 0) &&
+    positions.every((p, i) => i === 0 || positions[i - 1] < p),
+    JSON.stringify(positions))
+  // The fixture's rows carry no workspace, so that cell must print the dash
+  // instead of nothing at all — a blank cell shifts every column after it.
+  ok('a column with no data prints a dash, not an empty cell',
+    /—/.test(headText), headText.slice(0, 260))
+}
+
+// The row is one component, not five copies: the page source must build it
+// once and call it from every list, or the columns drift apart again.
+{
+  const rowSource = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  ok('one row component draws every list',
+    (rowSource.match(/React\.createElement\(SessionRow,/g) || []).length >= 5,
+    String((rowSource.match(/React\.createElement\(SessionRow,/g) || []).length))
+  ok('the six columns come from one caption component',
+    (rowSource.match(/React\.createElement\(ListHead,/g) || []).length >= 5,
+    String((rowSource.match(/React\.createElement\(ListHead,/g) || []).length))
+  ok('the caption names the six columns in the agreed order',
+    /var LIST_COLUMNS = \["文件大小", "时长", "对话名称", "文件数量", "工作区名称", "时间"\]/.test(rowSource))
+}
 ok('measured card does NOT re-scan after rendering the result',
   fetchCalls.filter((c) => String(c.url).endsWith('/snapshot-usage')).length - settingsBefore === 1,
   String(fetchCalls.filter((c) => String(c.url).endsWith('/snapshot-usage')).length - settingsBefore))
