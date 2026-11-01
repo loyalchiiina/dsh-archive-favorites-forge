@@ -461,7 +461,13 @@ globalThis.fetch = async (url, init) => {
   fetchCalls.push({ url, init })
   const body = init && init.body ? JSON.parse(init.body) : null
   let payload = { ok: true }
-  if (url.endsWith('/favorites')) payload = { ok: true, favorites: FAKE_FAVORITES }
+  // 0.37.1 — the 工作区名称 column prints the workspace TITLE, not the last
+  // folder of the path. One stub entry is titled, one is not: the untitled one
+  // must fall back to its folder rather than inventing a name.
+  if (url.endsWith('/workspace-titles')) {
+    payload = { ok: true, titles: { 'c:\\fake\\beta': 'DeepSeek Chat' } }
+  }
+  else if (url.endsWith('/favorites')) payload = { ok: true, favorites: FAKE_FAVORITES }
   else if (url.endsWith('/archived')) {
     // 0.31.0: the batch-delete card renders the archive as a list, so the stub
     // has to hand over titles, workspace folders and ages alongside the ids.
@@ -474,8 +480,8 @@ globalThis.fetch = async (url, init) => {
       source: "workspace",
       count: FAKE_ARCHIVED.length,
       entries: [
-        { sessionId: 'session-fav-1', title: 'A favourited chat', cwd: 'C:\\fake\\alpha', blank: false, updatedAt: now - 60 * 24 * 3600000, idleMs: 60 * 24 * 3600000 },
-        { sessionId: 'session-plain-1', title: 'Plain old chat', cwd: 'C:\\fake\\beta', blank: false, updatedAt: now - 50 * 24 * 3600000, idleMs: 50 * 24 * 3600000 },
+        { sessionId: 'session-fav-1', title: 'A favourited chat', cwd: 'C:\\fake\\alpha', blank: false, updatedAt: now - 60 * 24 * 3600000, idleMs: 60 * 24 * 3600000, bytes: 2048, fileCount: 2 },
+        { sessionId: 'session-plain-1', title: 'Plain old chat', cwd: 'C:\\fake\\beta', blank: false, updatedAt: now - 50 * 24 * 3600000, idleMs: 50 * 24 * 3600000, bytes: 4096, fileCount: 3 },
         { sessionId: 'session-plain-2', title: '', cwd: 'C:\\fake\\gamma', blank: true, updatedAt: null, idleMs: null },
       ],
     }
@@ -1759,8 +1765,13 @@ ok('humanDuration tolerates junk instead of printing NaN',
   // 🔴 The ungrouped card must be mounted AND must not be able to delete
   // without an explicit confirm. Both halves are asserted: a card that renders
   // but sends `confirm: true` unconditionally would be a one-click deleter.
+  // 0.37.1 — the card also takes the header refresh counter now, so the
+  // assertion matches the mount prefix rather than a fixed prop list. What
+  // matters is that the card is mounted at all; a card that renders but sends
+  // `confirm: true` unconditionally would still be a one-click deleter, and
+  // the next assertion covers that.
   ok('the ungrouped health card is mounted in the settings page',
-    bundleSource.includes('React.createElement(UngroupedCard, { key: "ungrouped" })'))
+    bundleSource.includes('React.createElement(UngroupedCard, { key: "ungrouped"'))
   ok('the ungrouped card only confirms after a dry run',
     bundleSource.includes('confirm: dryRun !== true') &&
     bundleSource.includes('dryRun: dryRun === true'))
@@ -1992,6 +2003,70 @@ if (existsSync(realSessionsRoot)) {
 
 // Point the workspace-registry read at the probe copy too.
 process.env.DSH_AFF_WORKSPACE_FILE = join(probeStorage, 'workspace.json')
+
+// ---------------------------------------------------------------------------
+// 0.37.1 — 刷新 has to do something on EVERY tab, and say what it did.
+//
+// Before this the header button only reloaded favourites + the archive list.
+// Standing on 快照清理 / 缓存与未分组 / 收藏清单 and pressing it changed nothing
+// on screen, which reads as "the button is broken" — the user's words. The fix
+// is a render-only counter the two inspector cards watch; each records the
+// value it mounted with, so opening the page still scans nothing.
+// ---------------------------------------------------------------------------
+{
+  const uiSource = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+  ok('the header refresh reaches the snapshot card',
+    /React\.createElement\(SnapshotUsageCard, \{[^}]*refreshTick: refreshTick/.test(uiSource))
+  ok('the header refresh reaches the ungrouped card',
+    /React\.createElement\(UngroupedCard, \{[^}]*refreshTick: refreshTick/.test(uiSource))
+  // The card must compare against the tick it mounted with, or the first
+  // render would immediately "refresh" and the page would scan on open.
+  ok('an inspector ignores the tick it mounted with',
+    (uiSource.match(/if \(refreshSeen\.current === null\) \{ refreshSeen\.current = next; return; \}/g) || []).length >= 2,
+    String((uiSource.match(/refreshSeen\.current === null/g) || []).length))
+  ok('the refresh says what it just did, out loud',
+    uiSource.includes('"刚刚刷新："') && uiSource.includes('key: "refresh-note"'))
+  ok('the refresh names the tab it refreshed',
+    uiSource.includes('did.push("快照统计")') &&
+    uiSource.includes('did.push("未分组诊断")') &&
+    uiSource.includes('did.push("收藏清单")') &&
+    uiSource.includes('did.push("可删行与占用")'))
+}
+
+// ---------------------------------------------------------------------------
+// 0.37.1 — the two size facts behind the six-column rows.
+//
+// The user's screenshot showed 文件大小 and 文件数量 as dashes on every row of
+// the delete card. The cause was the data source, not the renderer: those cells
+// read the SNAPSHOT LEDGER, and only 9 of 212 archived sessions here ever wrote
+// one. A session that never edited a file has no ledger but still occupies
+// bytes, and "what does deleting this free" is the number the column promises.
+//
+// So: the directory walk must report the whole session directory, and the
+// ledger walk must still report the ledger (the snapshot card needs it).
+// ---------------------------------------------------------------------------
+
+{
+  const dirFacts = await host.__internals.measureSessionDirsFor([realSessionId], undefined)
+  const fact = dirFacts.get(realSessionId)
+  ok('the size fact measures the whole session directory',
+    fact && fact.bytes > 0 && fact.fileCount === 1,
+    JSON.stringify(fact))
+
+  // No history-file was planted, which is the normal case: the ledger walk says
+  // "nothing", and that must not stop the directory walk from answering.
+  const ledgerFacts = await host.__internals.measureLedgersFor([realSessionId], undefined)
+  const ledgerFact = ledgerFacts.get(realSessionId) ?? null
+  ok('a session with no snapshots still gets a directory size',
+    (ledgerFact === null || ledgerFact.bytes === 0) && fact && fact.bytes > 0,
+    JSON.stringify({ ledger: ledgerFact, dir: fact ?? null }))
+
+  // An unresolvable id is skipped, not invented.
+  const ghosts = await host.__internals.measureSessionDirsFor(
+    ['session-00000000-0000-0000-0000-000000000000'], undefined)
+  ok('an unresolvable id yields no size fact',
+    ghosts.size === 0, String(ghosts.size))
+}
 
 // --- delete guard: a favourite must never be removed --------------------
 //
@@ -2784,6 +2859,23 @@ ok('a starred conversation is not offered for deletion',
 ok('an archived row shows its age', /50 天/.test(delText), delText.slice(0, 400))
 ok('an untitled archived conversation is labelled a new session',
   /（新会话）/.test(delText), delText.slice(0, 400))
+
+// ---------------------------------------------------------------------------
+// 0.37.1 — the user's screenshot: 文件大小 and 文件数量 were dashes on EVERY row.
+//
+// The columns were bound to the snapshot ledger, which only exists for sessions
+// that edited a file. On this machine that was 9 of 212 archived sessions, so
+// two of six columns were blank for 96% of the list — a column that is always
+// empty is worse than no column, because it looks like a loading failure. The
+// size cells now describe the WHOLE session directory (what deleting the row
+// actually frees), and the ledger size rides along separately.
+// ---------------------------------------------------------------------------
+ok('an archived row shows the size of the whole session directory',
+  /4\.0 KB/.test(delText), delText.slice(0, 400))
+ok('an archived row counts its files, not just its snapshots',
+  /3 个文件/.test(delText), delText.slice(0, 400))
+ok('a workspace is named by its title, not by its last folder',
+  /DeepSeek Chat/.test(delText), delText.slice(0, 400))
 
 // -- the shell really is shared -------------------------------------------
 ok('the archive card carries the same pre-tick switch',

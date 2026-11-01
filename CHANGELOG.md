@@ -4,6 +4,87 @@ All notable changes to this project are documented here.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 this project uses [Semantic Versioning](https://semver.org/).
 
+## 0.37.1 — 2026-11-01
+
+### 「文件大小 / 文件数量」不再是一片破折号
+
+0.37.0 把这两列绑在**快照账本**（`history-file/`）上。逻辑上诚实——删掉一个会话确实会带走它的账本——但账本只存在于「改过文件」的会话里。本机 310 条归档对话中，磁盘上有目录的 212 条里**只有 9 条写过快照**，于是这两列对 96% 的行显示 `—`。
+
+用户截图里那一整列破折号就是它。一列永远是空的，比没有这一列更糟：它看起来像加载失败。
+
+| 列 | 0.37.0 数据源 | 0.37.1 数据源 |
+| --- | --- | --- |
+| 文件大小 | 快照账本字节（多数为 0 → `—`） | **整个会话目录**（转录 + 账本），即「删掉能腾出多少」 |
+| 文件数量 | 账本里的 blob 个数（多数为 0 → `—`） | **整个会话目录的文件数** |
+| 时间 | 最后快照时间 | 最后快照时间（不变） |
+
+账本数字没有丢：`/archived` 每行仍然带 `ledgerBytes` / `blobCount` / `lastSnapshotAt`，快照清理卡照旧用自己的口径。
+
+新增宿主函数 `measureSessionDirsFor(ids, ctx)`：递归 `stat` 每个会话目录，累加字节与文件数，`MAX_LEDGER_ROWS = 120` 封顶、`LEDGER_FANOUT = 8` 有界扇出、异常静默跳过。它和 `measureLedgersFor` 一样**只在用户刚打开的按需路由里跑，绝不定时**。本机实测：212 个会话目录合计 593,778,490 B（≈568 MB），全量遍历 46 ms。
+
+### 「工作区名称」印出了文件夹名
+
+同一张截图里，工作区列每一行都是 `workspace`。那不是工作区名字，那是路径的最后一段（`C:\Users\...\deepseek-web\workspace`）。注册表里明明写着 `DeepSeek Chat`。
+
+- 新增 `GET /workspace-titles`：把 `workspace.json` 的 `path → title` 映射一次性交给页面（一次小 JSON 读，不扫会话）。
+- 客户端 `workspaceName(cwd)`：命中标题就用标题，未命中**退回文件夹名**——错的名字比诚实的目录更糟。`lastFolder()` 保留为兜底。
+- `GET /favorites` 顺带补 `cwd`：老的收藏项存的是空串，现在用实时注册表回填，收藏行也能报出工作区。
+
+### 「刷新」在大部分栏里按下去没反应
+
+页头那颗「刷新」原先只做 `refreshFavorites(); loadArchived();`。停在「快照清理」「缓存与未分组」「收藏清单」时点它，屏幕上什么都不变——用户的原话是「刷新也不现实」。
+
+现在它按当前栏分发：
+
+```js
+function refreshCurrent() {
+  refreshFavorites();
+  loadArchived();
+  var did = ["归档列表", "收藏状态"];
+  if (view === "idle") { loadPreview(idleHours); did.push("候选清单"); }
+  if (view === "del") did.push("可删行与占用");
+  if (view === "snapshot-usage") did.push("快照统计");
+  if (view === "ungrouped") did.push("未分组诊断");
+  if (view === "fav") did.push("收藏清单");
+  setRefreshTick(refreshTick + 1);
+  setRefreshNote("刚刚刷新：" + did.join(" + "));
+}
+```
+
+两张巡检卡（`SnapshotUsageCard` / `UngroupedCard`）接收 `refreshTick`，各自用 `useRef` 记住挂载时的值，**第一次渲染只记录不扫描**，值变了才真的重扫。所以：
+
+- 打开页面依旧不扫盘（原来的承诺没破）；
+- 刷新现在每一栏都有动作；
+- 按钮旁边多一行小字「刚刚刷新：快照统计」，**数据真没变也把「我做了这件事」说出来**——按了没反应本身就是一条 bug 报告。
+
+页头按钮的 `title` / `aria-label` 也同步改成「刷新当前栏」，不再谎称只刷归档与收藏。
+
+### 探针
+
+七套合计 **684 条全绿**（0.37.0 是 673）。
+
+`probe-client` 345 条，新增 11 条：
+
+| 断言 | 为什么必须有 |
+| --- | --- |
+| an archived row shows the size of the whole session directory | 截图里的空列就是这条回归 |
+| an archived row counts its files, not just its snapshots | 同上，文件数量 |
+| a workspace is named by its title, not by its last folder | 防止印出 `workspace` 这类文件夹名 |
+| the size fact measures the whole session directory | `measureSessionDirsFor` 真的走了递归 |
+| a session with no snapshots still gets a directory size | 最常见的情况：没账本也必须有数字 |
+| an unresolvable id yields no size fact | 解析不到的 id 不许编造 |
+| the header refresh reaches the snapshot card | 刷新信号真的连上了 |
+| the header refresh reaches the ungrouped card | 同上 |
+| an inspector ignores the tick it mounted with | 打开页面不许扫盘 |
+| the refresh says what it just did, out loud | 反馈文案不能悄悄消失 |
+| the refresh names the tab it refreshed | 六栏都登记进了 `did` |
+
+`measureLedgersFor` / `measureSessionDirsFor` 已加入 `__internals`，宿主探针可以直接驱动它们。
+
+### 升级
+
+必须**完全退出 DSH 再重开**：这次改了 `lib/index.js`（新增路由与两个测量函数）和 `lib/client.js`（行渲染 + 刷新分发），两半都要重新加载。
+
 ## 0.37.0 — 2026-11-01
 
 ### 七处列表统一成同一套六列

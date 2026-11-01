@@ -77,7 +77,7 @@ so it composes with the shipped UI instead of patching it.
 | ⑮ | **隐藏「未分组」分组**：一个纯视图开关（**默认开启**），把侧栏底部那个分组（连组头）整体藏起来，不删任何对话 | **Hide the "Ungrouped" group** — a pure view switch (**on by default**) that hides the whole bucket (header and rows) from the sidebar; nothing is deleted |
 | ⑯ | **新窗口继续对话**：把长对话蒸馏成一份交接书（用户要求时间线 + 任务进度清单 + 团队任务 + 最近进展），先弹窗报告「检测到任务进行到 第 N 轮」，确认后新开一个 `新对话-<原名>`、**继承原对话的预设智慧体**并自动把交接书发过去 | **Continue in a new window** — distils a long conversation into a handover brief (requirement timeline, task progress, team tasks, latest progress), reports "you are N turns in" first, then on confirm opens `新对话-<original title>` with the **original agent preset inherited** and sends the brief as its first message |
 | ⑰ | **快照清理（统计 + 手动删除）**：设置页「快照清理」栏点「立即统计」才扫一次（渲染时不扫、无定时器），列出每个会话 `history-file/` 占了多少、多少个快照文件、多少条记录、**不活跃时长**；**收藏的会话不进可删列表**，只在汇总行单独报；可选打开「超时预勾选」（默认关，开前须确认风险）自动勾上超时行，删除仍需先试算再二次确认，删的目录进 Windows 回收站。**绝不自动清理** | **Snapshot usage & manual cleanup** — one press of "measure now" scans the ledger directories once (never on render, never on a timer), reporting bytes, blob count, row count, **idle time and last snapshot time** per conversation, in the shared six columns (see ⑱); **favourited conversations are lifted out of the cleanup list** and reported on a separate summary line; an optional "pre-tick idle rows" switch (off by default, risk acknowledgement required) ticks rows past the threshold after each scan; deletion still needs a dry run plus a confirm, and the directory goes to the recycle bin. **Nothing is ever pruned automatically** |
-| ⑱ | **列表统一六列**：**每一栏**的列表都是同一套列 —— `文件大小 \| 时长 \| 对话名称 \| 文件数量 \| 工作区名称 \| 时间`，由一个共用行组件渲染，缺失值统一显示破折号而不是留空（详见 "The six-column row format"）；文件大小与文件数量取自各会话的快照账本，且**只在你点开那一栏时才量**，单次上限 120 行、并发 8 | **One row format everywhere** — every list on the page uses the same six columns (`文件大小 \| 时长 \| 对话名称 \| 文件数量 \| 工作区名称 \| 时间`), drawn by a single shared row component, with an em dash for a cell that genuinely has no value instead of a blank one; size and file count come from each session's snapshot ledger and are measured **only when you open that panel**, capped at 120 rows per request with a fan-out of 8 |
+| ⑱ | **列表统一六列**：**每一栏**的列表都是同一套列 —— `文件大小 \| 时长 \| 对话名称 \| 文件数量 \| 工作区名称 \| 时间`，由一个共用行组件渲染，缺失值统一显示破折号而不是留空（详见 "The six-column row format"）；文件大小与文件数量取自各会话的快照账本，且**只在你点开那一栏时才量**，单次上限 120 行、并发 8 | **One row format everywhere** — every list on the page uses the same six columns (`文件大小 \| 时长 \| 对话名称 \| 文件数量 \| 工作区名称 \| 时间`), drawn by a single shared row component, with an em dash for a cell that genuinely has no value instead of a blank one; size and file count come from the **whole session directory** (transcript + ledger — i.e. what deleting that row frees), the workspace name comes from the workspace registry title (falling back to the folder name), and all of it is measured **only when you open that panel**, capped at 120 rows per request with a fan-out of 8 |
 
 ### Where each feature lives
 
@@ -468,11 +468,16 @@ this card archives also has its `history-file/` ledger sent to the Windows recyc
   (快速上手). Nothing is lost — the fallback is a view, not data.
 - Hidden panels stay mounted. Measure the snapshot usage, switch to another
   panel, come back: the report is still on screen.
-- The 刷新 button in the top-right re-reads the archive list and the favourites
-  set only (plus the idle candidate preview when 批量归档 is the current panel).
-  The three heavy inspectors — snapshot scan, ungrouped diagnosis, orphan-cache
-  scan — each own a button inside their card. Refreshing never runs them, and
-  nothing on this page ever scans the disk on its own.
+- The 刷新 button in the top-right **dispatches by panel**: it always re-reads the
+  archive list and the favourites set, it refreshes the candidate preview when
+  批量归档 is open, it re-runs the snapshot scan when 快照清理 is open, and it
+  re-runs the ungrouped diagnosis when 缓存与未分组 is open. After it runs, a small
+  line appears to its left — 「刚刚刷新：快照统计」 — naming what it just did, even
+  when the numbers did not change. A button that does nothing visible is itself a
+  bug report.
+- Opening the page still scans nothing: each inspector card records the refresh
+  counter it mounted with and only re-runs when that counter actually changes, so
+  the old promise (no scan on render, no timer) is intact.
 
 ### The six-column row format (since 0.37.0)
 
@@ -486,9 +491,10 @@ One `SessionRow` component draws every row; one `ListHead` component draws every
 
 - **The dash is not decoration.** A cell that genuinely has no data prints `—` — it is not left blank and the column is not dropped. A blank cell pushes every later column one slot to the left, which is exactly how two lists end up looking like two different schemas.
 - **The dash is a promise.** No cell is ever filled by scanning the disk behind your back. For real numbers, press that card's own button (立即统计 / 诊断 / 扫描) or just open the panel.
-- What each column means: **文件大小** = bytes in that session's `history-file` snapshot ledger (a dash when it never wrote one); **时长** = how long ago the 时间 stamp is, tinted when it passes the card's threshold; **文件数量** = snapshot blob count; **工作区名称** = last path segment of the session's cwd; **时间** = last snapshot write (archive/idle rows use the conversation's update time, 未分组 uses creation time, favourites use the starred moment).
+- What each column means: **文件大小** = bytes in the session's **whole directory** (transcript + `history-file/` ledger) — that is, what deleting the row frees; **时长** = how long ago the 时间 stamp is, tinted when it passes the card's threshold; **文件数量** = file count of that directory; **工作区名称** = the workspace registry title (e.g. 「DeepSeek Chat」), falling back to the cwd's last segment; **时间** = last snapshot write (archive/idle rows use the conversation's update time, 未分组 uses creation time, favourites use the starred moment).
+- **0.37.1 corrected three of those meanings.** 0.37.0 pointed 文件大小 / 文件数量 at the snapshot ledger, and a ledger only exists for conversations that edited a file — 9 of the 212 archived sessions with a directory on this machine — so both columns read a dash on 96% of the rows. The workspace column printed the cwd's last segment (folder names like `workspace`), not the workspace name at all. Size and count now measure the whole directory; the name comes from the registry.
 
-**Cost policy (do not relax it).** The archive and idle lists used to know only a title and a timestamp. Since 0.37.0 they measure the ledger — but only when you open that panel or press its button, at most 120 rows per request (the page renders 60, so the cap is invisible), with a fixed fan-out of 8 because measuring a ledger stats every blob. The plugin never scans on its own.
+**Cost policy (do not relax it).** The archive and idle lists used to know only a title and a timestamp. Since 0.37.1 they measure two things per row — the whole session directory (size + file count, so the delete card can answer "what does this free") and the ledger (for 时间) — but only when you open that panel or press its button, at most 120 rows per request (the page renders 60, so the cap is invisible), with a fixed fan-out of 8. Walking 212 session directories took 46 ms here for 568 MB, so the numbers are cheap; they still never run on a timer, and never on render.
 
 ### Limits of the Ungrouped health check
 
