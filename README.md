@@ -17,21 +17,37 @@ English | [简体中文](README.zh.md)
 
 ## Screenshots
 
-**1. The conversation menu** — four rows added to the shipped 「…」 menu: favourite, copy id + path, continue in a new window, and a guarded delete. The harness's own duplicate 「复制 Session ID」 row is hidden:
+**1. The session menu** — favourite / unfavourite, copy id + path and continue-in-a-new-window added to the shipped 「…」 menu; pin, rename, fork and archive stay on the official rows:
 
 ![Session menu](assets/01-session-menu.png)
 
-**2. The favourites filter** — two extra rows in the official 筛选会话 group, narrowing the sidebar to favourites that are archived and to favourites that are not:
+**2. Favourites and filters** — two extra rows in the official 筛选会话 group, narrowing the sidebar to favourites that are archived and to favourites that are not. The same menu carries grouping and ordering:
 
 ![Favourites filter](assets/02-favourites-filter.png)
 
-**3. The settings panel** — idle batch archive, the favourites list with archive state, and batch delete of archived conversations that are not favourites:
+**3. Quick start** — the landing panel of Settings → 归档助手: three things to keep apart (archive / delete snapshots / delete the conversation), what each of the six panels does, and the three safety rules. Opening the page scans nothing:
 
-![Settings panel](assets/03-settings-panel.png)
+![Quick start](assets/03-quick-start.png)
 
-**4. The per-turn buttons** — 复制 → ↺ undo → ✏️ edit-and-resend → 🗑 delete under every human message, including the messages you interject mid-turn:
+**4. Batch archive** — pick un-archived conversations by idle time; the six-column table carries real size, idle age, file count, workspace and timestamp. The 「归档后顺带删除这些对话的快照」 switch at the bottom is on by default:
 
-![Turn actions](assets/04-turn-actions.png)
+![Batch archive](assets/04-batch-archive.png)
+
+**5. Delete archived** — lists only archived conversations that are not favourites, behind a red button and two confirmations. The title says outright that this delete is permanent and never reaches the Recycle Bin:
+
+![Delete archived](assets/05-archive-delete.png)
+
+**6. Snapshot cleanup** — measures what each session history-file occupies, then sends the ticked ones to the Windows Recycle Bin (recoverable). Favourites are never part of the deletable list:
+
+![Snapshot cleanup](assets/06-snapshot-cleanup.png)
+
+**7. The favourites list** — read-only. Each row shows the size of the whole session directory, how long it has been idle, its file count and the last update time. A favourite is never deletable:
+
+![Favourites list](assets/07-favourites-list.png)
+
+**8. The per-turn buttons** — 复制 → ↺ undo → ✏️ edit-and-resend → 🗑 delete under every human message, including the messages you interject mid-turn:
+
+![Turn actions](assets/08-turn-actions.png)
 
 ---
 
