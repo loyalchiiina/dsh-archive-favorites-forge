@@ -545,39 +545,59 @@ ok('diagnoseGhostCache reads the title out of the cache (that is what the sideba
   ghostDiag.ghosts.some((row) => row.sessionId === 'session-probe-ghost-0011' && row.title === '1+1'),
   brief(ghostDiag.ghosts.map((row) => row.sessionId + '=' + row.title)))
 
+// 0.36.0 flipped this default on purpose. Before it, a ghost that happened to
+// sit in `archivedSessionIds` was advised `keep` and skipped by the cleanup —
+// and on a real machine 85 of 86 orphans carried exactly that stale flag, so
+// the "clean up" button deleted nothing at all while showing a full list. The
+// orphan's own archive/pin marker only described a conversation that no longer
+// exists; it says nothing about whether a cache file should survive. So the
+// diagnosis now advises `delete` for every orphan, and the counts only remain
+// as labels for the UI.
 const ghostAdvice = new Map(ghostDiag.ghosts.map((row) => [row.sessionId, row.advise]))
 ok('a plain ghost is advised delete', ghostAdvice.get('session-probe-ghost-0011') === 'delete', brief([...ghostAdvice]))
-ok('a pinned ghost is advised keep', ghostAdvice.get('session-probe-ghostpinned-0012') === 'keep', brief([...ghostAdvice]))
-ok('an archived ghost is advised keep', ghostAdvice.get('session-probe-ghostarchived-0013') === 'keep', brief([...ghostAdvice]))
+ok('a pinned ghost is ALSO advised delete by default',
+  ghostAdvice.get('session-probe-ghostpinned-0012') === 'delete', brief([...ghostAdvice]))
+ok('an archived ghost is ALSO advised delete by default',
+  ghostAdvice.get('session-probe-ghostarchived-0013') === 'delete', brief([...ghostAdvice]))
 
 const ghostDry = await cleanupGhostCache(null, ghostDiag.ghosts)
 
 ok('cleanupGhostCache defaults to dryRun', ghostDry.dryRun === true, brief(ghostDry))
-// Only the plain ghost is deletable by default. Pinned AND archived ghosts are both
-// advised `keep` by the diagnosis, so the plan must agree — a list that says "keep"
-// while the confirm button deletes would be the worst kind of surprise.
-ok('dryRun plans the one plain ghost and nothing else',
-  ghostDry.deleted.length === 1 && ghostDry.deleted[0] === 'session-probe-ghost-0011',
+// All three orphans are deletable by default now. The list and the confirm
+// button agree: what the card lists is what the plan contains.
+ok('dryRun plans every orphan, including the pinned and archived ones',
+  ghostDry.deleted.length === 3 &&
+  ghostDry.deleted.includes('session-probe-ghost-0011') &&
+  ghostDry.deleted.includes('session-probe-ghostpinned-0012') &&
+  ghostDry.deleted.includes('session-probe-ghostarchived-0013'),
   brief(ghostDry.deleted))
-ok('dryRun skips the pinned ghost by default',
-  ghostDry.skipped.some((row) => row.sessionId === 'session-probe-ghostpinned-0012' && row.reason === 'pinned-kept'),
-  brief(ghostDry.skipped))
-ok('dryRun skips the archived ghost by default (matching its keep advice)',
-  ghostDry.skipped.some((row) => row.sessionId === 'session-probe-ghostarchived-0013' && row.reason === 'archived-kept'),
-  brief(ghostDry.skipped))
+ok('dryRun skips nothing by default', ghostDry.skipped.length === 0, brief(ghostDry.skipped))
 ok('dryRun removes no cache file from disk',
   ghostDiag.ghosts.every((row) => existsSync(row.file)),
   brief(ghostDiag.ghosts.filter((row) => !existsSync(row.file)).map((row) => row.sessionId)))
 ok('dryRun leaves workspace.json byte-identical',
   readFileSync(workspaceFile, 'utf8') === workspaceBytesBeforeGhosts)
 
-const ghostWithPinned = await cleanupGhostCache(null, ghostDiag.ghosts, { includePinned: true })
-ok('includePinned:true puts the pinned ghost in the plan',
-  ghostWithPinned.deleted.includes('session-probe-ghostpinned-0012'), brief(ghostWithPinned.deleted))
+// The opt-out: "keep the pinned/archived ones" is a real checkbox on the card,
+// and it must be the ONLY way those rows survive.
+const ghostKeepPinned = await cleanupGhostCache(null, ghostDiag.ghosts, { keepPinned: true })
+ok('keepPinned:true spares the pinned ghost',
+  !ghostKeepPinned.deleted.includes('session-probe-ghostpinned-0012') &&
+  ghostKeepPinned.skipped.some((row) => row.sessionId === 'session-probe-ghostpinned-0012' && row.reason === 'pinned-kept'),
+  brief({ deleted: ghostKeepPinned.deleted, skipped: ghostKeepPinned.skipped }))
 
-const ghostWithArchived = await cleanupGhostCache(null, ghostDiag.ghosts, { includeArchived: true })
-ok('includeArchived:true puts the archived ghost in the plan',
-  ghostWithArchived.deleted.includes('session-probe-ghostarchived-0013'), brief(ghostWithArchived.deleted))
+const ghostKeepArchived = await cleanupGhostCache(null, ghostDiag.ghosts, { keepArchived: true })
+ok('keepArchived:true spares the archived ghost',
+  !ghostKeepArchived.deleted.includes('session-probe-ghostarchived-0013') &&
+  ghostKeepArchived.skipped.some((row) => row.sessionId === 'session-probe-ghostarchived-0013' && row.reason === 'archived-kept'),
+  brief({ deleted: ghostKeepArchived.deleted, skipped: ghostKeepArchived.skipped }))
+
+// The old parameter names are inert rather than silently reversed: a caller
+// that still says `includePinned: true` must not be read as `keepPinned: true`
+// (which would invert the meaning of the very same word).
+const ghostLegacy = await cleanupGhostCache(null, ghostDiag.ghosts, { includePinned: true, includeArchived: true })
+ok('legacy includePinned/includeArchived no longer change the plan',
+  ghostLegacy.deleted.length === 3, brief({ deleted: ghostLegacy.deleted }))
 
 const ghostOutside = await cleanupGhostCache(null, [
   { sessionId: 'session-probe-outside-0010', file: join(root, 'outside', 'session-probe-outside-0010.json') },
@@ -591,13 +611,12 @@ ok('an entry without a file path is skipped, not deleted',
   ghostMissing.skipped.some((row) => row.reason === 'missing-id-or-file') && ghostMissing.deleted.length === 0,
   brief(ghostMissing))
 
-// Only one ghost is deletable under the defaults, so the budget can only be
-// exercised once the kept classes are opted in.
-const ghostBudget = await cleanupGhostCache(null, ghostDiag.ghosts, {
-  maxItems: 1, includePinned: true, includeArchived: true,
-})
+// Three ghosts are deletable under the defaults now, so a budget of 1 must both
+// delete one and report the other two as budget-exhausted.
+const ghostBudget = await cleanupGhostCache(null, ghostDiag.ghosts, { maxItems: 1 })
 ok('maxItems caps the ghost plan',
-  ghostBudget.deleted.length === 1 && ghostBudget.skipped.some((row) => row.reason === 'budget-exhausted'),
+  ghostBudget.deleted.length === 1 &&
+  ghostBudget.skipped.filter((row) => row.reason === 'budget-exhausted').length === 2,
   brief({ deleted: ghostBudget.deleted, skipped: ghostBudget.skipped }))
 
 // ---------------------------------------------------------------------------

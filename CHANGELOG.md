@@ -4,6 +4,103 @@ All notable changes to this project are documented here.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 this project uses [Semantic Versioning](https://semver.org/).
 
+## 0.36.0 — 2026-11-01
+
+### 设置页改名 + 重排：现在叫「归档助手」，六个栏目
+
+用户 2026-11-01 拍板：把设置页重新起名并重排，因为原来的五栏里**按钮长在了错的那一栏**。
+
+| 项 | 0.35.1 | 0.36.0 |
+| --- | --- | --- |
+| 设置页名称（`settings.section` 标签 + 页头） | 归档收藏 / 归档收藏与管理 | **归档助手** |
+| 栏目数 | 5 | **6** |
+| 落地页 | 超时归档 | **快速上手** |
+
+新顺序与名称（`VIEW_ORDER`）：
+
+1. **快速上手**（`start`，新）——纯说明卡，没有任何按钮
+2. **批量归档**（`idle`，原「超时归档」）
+3. **删除归档**（`del`，原「归档清理」）——卡名「删除归档对话（永久）」
+4. **快照清理**（`snapshot-usage`，原「快照占用」）
+5. **缓存与未分组**（`ungrouped`，原「未分组体检」）
+6. **收藏清单**（`fav`，原「收藏列表」）
+
+改名的理由：旧名描述的是**触发条件**（超时、占用），新名描述的是**这一栏会做什么**（批量归档、快照清理、删除）。「快照占用」尤其误导——它听起来像「看看占多少」，其实卡里有删除按钮。
+
+### 「快速上手」栏说了什么
+
+落地页从「超时归档」改成一张只读说明卡。理由很直接：这个页面上每一个按钮都会删东西，第一次打开的人需要先知道六栏各做什么、哪些可逆、红线在哪，而不是被直接丢进一个批量归档控件。
+
+`GUIDE_ROWS` 四节：
+
+- **先分清三件事**：归档（只改状态、不动字节）/ 删快照（进回收站、可恢复、对话还在）/ 删对话（整个目录、永久、不可恢复）
+- **六栏分别做什么**：逐栏一句话
+- **三条安全底线**：收藏即豁免 / 凡删除都两步（试算 → 确认）/ 重活不自动跑（统计、诊断、扫描都要按键）
+- **右上角「刷新」做什么**：只重读归档列表与收藏状态
+
+### 按钮归属纠正：页头「刷新」原来三分之一的时间是死按钮
+
+旧版页头「刷新」的 `onClick` 只有 `refreshFavorites(); loadArchived();` —— 停在「快照占用」或「未分组体检」栏时点它**屏幕不会有任何变化**，因为那两张卡的数据要自己按卡内按钮才扫。
+
+现在 `refreshCurrent()`：
+
+```js
+function refreshCurrent() {
+  refreshFavorites();
+  loadArchived();
+  if (view === "idle") loadPreview(idleHours);
+}
+```
+
+并给按钮补了 `title`「重新读取归档列表与收藏状态（不会触发快照统计或未分组诊断）」与 `aria-label`「刷新归档列表与收藏状态」——**把「它不做的三件事」写进 tooltip**，而不是假装它会做。三件重活（快照统计、未分组诊断、孤儿缓存扫描）刻意留在各自卡内：那是会扫盘的 IO，永远不该被一个全局按钮隐式触发。
+
+### 视觉统一：新增 6 个样式常量，替换全部行内重复写法
+
+```js
+var TITLE_STYLE   = { fontWeight: "600", fontSize: "13.5px", lineHeight: "20px" };
+var SUBHEAD_STYLE = { fontWeight: "600", fontSize: "12.5px", lineHeight: "19px" };
+var HINT_STYLE    = { opacity: .72, fontSize: "12px", lineHeight: "17px" };
+var SUBTLE_STYLE  = { opacity: .6,  fontSize: "11px", lineHeight: "16px" };
+var ROW_STYLE     = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px" };
+var INPUT_STYLE   = Object.assign({}, BTN_STYLE, { width: "72px", padding: "4px 8px", cursor: "text" });
+```
+
+替换结果：7 处手写 `{ fontWeight: "600" }` 标题 → `TITLE_STYLE`；4 处手写 `{ opacity: .72, fontSize: "12px", lineHeight: "17px" }` 说明行 → `HINT_STYLE`（改完全文件只剩常量定义那一处）；4 处手写页头 `display:flex / space-between / gap:10px` → `ROW_STYLE`；2 处手写阈值输入框 → `INPUT_STYLE`；`statusOn/statusOff`、`p-summary`、「归档来源」→ `SUBTLE_STYLE`。每张卡现在都是同一副骨架：**标题 + 一句话说明 + 控件 + 风险分级**。
+
+同时给三张卡补了原来缺的一句话说明：删除归档卡写「这一栏是永久删除——对话和转录一起消失，进不了回收站」；收藏卡写「收藏是删除侧的唯一豁免」；批量归档卡把说明从重复控件文案改成「归档只改状态、不动任何字节」。
+
+### 修复：孤儿缓存「列表写着保留、确认按钮什么也不删」
+
+用户在本机跑出来 86 条幽灵缓存、4141 KB，**列表上一条一条写着「已归档，保留」/「置顶，保留」，点「确认清理」却一条都没删掉**。根因是两处默认值互相配合：
+
+| 位置 | 0.35.1 | 0.36.0 |
+| --- | --- | --- |
+| `diagnoseGhostCache` 的 `advise` | `pinned \|\| archived ? "keep" : "delete"` | **`"delete"`** |
+| `cleanupGhostCache` 的跳过参数 | `includePinned=false` / `includeArchived=false`（不给就跳过） | **`keepPinned=false` / `keepArchived=false`（不给就删）** |
+| 客户端勾选框 | 无 | **「保留已归档 / 置顶的那几条」（默认不勾）** |
+
+为什么必须翻过来：本机 86 条幽灵里 **85 条**带着「已归档」的孤儿标记、1 条带「置顶」——而这些标记指向的对话**早就不存在了**。用一个已消失对象的标记去决定一份缓存该不该留，等于让清理功能永远空转。现在默认全部可删，要留就显式勾框。
+
+兼容处理：旧的 `includePinned` / `includeArchived` 参数名**仍然被接受，但语义不反转**——传 truthy 会被忽略，不会被重新解释成「保留」。同一个词在新旧版本里意思相反是最难查的一类线上问题。
+
+UI 同步：卡名「缓存幽灵」→「**孤儿缓存**」；计数行去掉「默认保留」；列表行尾从「置顶，保留」改成单纯的「置顶」/「已归档」标签；确认框文案改为「…不会删除任何对话——这些会话的目录早就不存在了。」，勾了保留框时追加「已勾选保留的那几条会跳过。」
+
+### 探针
+
+七套合计 **662 条全绿**（0.35.1 是 661）：probe-client **334**、probe-snapshot-usage 83、probe-filehistory 39、probe-ungrouped-guard 86、probe-digest 58、probe-sidebar-watch 43、probe-delete-ledger 19。
+
+`probe-client.mjs` 的改写要点：
+
+- 新增 `renderOnView(key)`：0.36.0 起每张卡都在自己 tab 后面、首次访问才挂载，所以断言前必须先切到那一栏。落地页断言改成「打开就在快速上手」。
+- tab 计数 5 → 6、`neverVisited` 4 → 5、标签数组换成新的六个。
+- 六处 `cardContaining(tree, /快照占用/)` 与三处 `cardContaining(tree, /批量删除归档中/)` **换成 `panelOf(tree, "snapshot-usage")` / `panelOf(tree, "del")`**：改名之后卡标题与 tab 标签同名，用文本当 marker 会把整条 tab 栏一起匹配进来，取到的作用域里根本没有「试算删除」按钮。
+
+`probe-ungrouped-guard.mjs` 的改写要点：三条 `advise` 断言全部改成 `delete`；默认干跑计划里三条孤儿全在、零跳过；新增 `keepPinned: true` 才留置顶、`keepArchived: true` 才留归档两条反向断言；新增「旧参数名不再改变计划」一条兼容性断言；预算段改成只靠 `maxItems: 1` 触发 `budget-exhausted`。
+
+### 升级提示
+
+宿主半边（`lib/index.js` / `lib/ungrouped-guard.js`）没有热重载，**必须完全退出 DSH 再打开**。浏览器里存着的 `dsh-aff-settings-view` 会保留上次那一栏；如果它指向的 key 已经不存在，兜底到「快速上手」。
+
 ## 0.35.1 — 2026-11-01
 
 ### 验证：任何一条删对话的路径都会连带删掉快照，一条不落

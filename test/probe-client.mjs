@@ -973,7 +973,7 @@ ok('star click stops propagation (does not open the chat)', starClickStopped)
 // ---------------------------------------------------------------------------
 
 const sectionText = textOf(renderOne(sections[0], {}).tree)
-ok('settings section renders a heading', /归档收藏/.test(sectionText), sectionText.slice(0, 120))
+ok('settings section renders a heading', /归档助手/.test(sectionText), sectionText.slice(0, 120))
 ok('settings section mentions favourites', /收藏/.test(sectionText), sectionText.slice(0, 120))
 
 // ---------------------------------------------------------------------------
@@ -1235,7 +1235,7 @@ for (const gone of ['applyTurnSort', 'turnSortMode', 'TURN_SORT', 'loadTurnCount
 // And the settings page must not offer the control any more.
 const sectionForSort = entries.find((r) => r.id === 'archive-favorites')
 resetHooks()
-const sectionTree = expand(sectionForSort.component({ close() {} }), 0)
+const sectionTreeStart = expand(sectionForSort.component({ close() {} }), 0)
 for (const fn of effectQueue) { try { fn() } catch (e) {} }
 await settle()
 
@@ -1247,6 +1247,12 @@ function collectButtons(node, out) {
   for (const c of node.children ?? []) collectButtons(c, out)
   return out
 }
+/**
+ * 0.36.0: the landing view is 快速上手, so a card that lives on another tab is
+ * not mounted until its tab is opened. Everything below that looks at the idle
+ * card presses its tab first — the same gesture a user makes.
+ */
+const sectionTree = await goToView(sectionTreeStart, 'idle')
 const sectionButtons = collectButtons(sectionTree, [])
 const sectionBodyText = textOf(sectionTree)
 ok('settings section no longer mentions 轮次',
@@ -1730,8 +1736,10 @@ ok('humanDuration tolerates junk instead of printing NaN',
   // children, so this asserts the cards by name instead — that is what "the
   // page has these cards" actually means. `head` is the title row, not a
   // CARD_STYLE box, so it is matched on its own.
+  // 0.36.0: the head row now shares the ROW_STYLE constant with every other
+  // card head, so the literal inline style it used to spell out is gone.
   ok('the settings page renders its head row',
-    bundleSource.includes('key: "head", style: { display: "flex"'))
+    bundleSource.includes('key: "head", style: ROW_STYLE'))
   for (const key of ['idle', 'fav']) {
     ok(`the settings page renders its ${key} card`,
       bundleSource.includes(`key: "${key}", style: CARD_STYLE`))
@@ -1823,8 +1831,12 @@ ok('humanDuration tolerates junk instead of printing NaN',
   ok('no turn lookup is still restricted to data-chat-flow-kind="user" alone',
     !bundleSource.includes('closest(\'[data-chat-flow-kind="user"][data-chat-turn]\')') &&
     !/querySelector\(`\[data-chat-flow-kind="user"\]\[data-chat-turn="\$\{[a-zA-Z.]+\}"\]`\)/.test(bundleSource))
-  ok('the batch card is titled 超时批量归档',
-    bundleSource.includes('"超时批量归档"') && !bundleSource.includes('"超时自动归档"'))
+  // 0.36.0 renamed this card to name the ACTION ("批量归档闲置对话") rather
+  // than the trigger ("超时"), because the threshold is a setting on the card,
+  // not the thing the card does.
+  ok('the batch card is titled 批量归档闲置对话',
+    bundleSource.includes('"批量归档闲置对话"') &&
+    !bundleSource.includes('"超时自动归档"'))
 }
 
 // The reveal route must refuse anything outside the plugin's own export folder,
@@ -2283,7 +2295,10 @@ const settingsBefore = fetchCalls.filter((c) => String(c.url).endsWith('/snapsho
 const settingsTree = expand(sections[0].component({}), 0)
 for (const fn of effectQueue) { try { fn() } catch (e) {} }
 
-ok('settings page shows the snapshot-usage card', /快照占用/.test(textOf(settingsTree)))
+// 0.36.0: the page OPENS on 快速上手 — an orientation card, not a destructive
+// control. Asserting the landing card is therefore also asserting that the
+// plugin does not drop a first-time visitor onto a bulk archive button.
+ok('settings page opens on the quick-start card', /快速上手/.test(textOf(settingsTree)))
 
 // --- 0.32.0: one function switcher, one panel on screen -------------------
 function tabButtons(tree) {
@@ -2317,15 +2332,32 @@ async function goToView(tree, key) {
   await settle()
   return next
 }
+/**
+ * 0.36.0: 快速上手 is the landing tab, so every card lives behind its own tab
+ * and mounts on first visit. Each block below that reads a specific card calls
+ * this instead of re-rendering blind — the page is rendered, its tab is
+ * pressed, and the re-rendered tree is returned. The view choice is remembered
+ * in a hook slot, so later re-renders in the same block stay on that tab.
+ */
+async function renderOnView(key) {
+  hookCursor = 0
+  effectQueue.length = 0
+  const first = expand(sections[0].component({}), 0)
+  for (const fn of effectQueue) { try { fn() } catch (e) {} }
+  await settle()
+  if (key === null) return first
+  const touched = await goToView(first, key)
+  return touched === null ? first : touched
+}
 const tabNodes = tabButtons(settingsTree)
-ok('the section renders a function switcher', tabNodes.length === 5,
+ok('the section renders a function switcher', tabNodes.length === 6,
   JSON.stringify(tabNodes.map((b) => textOf(b))))
-ok('the switcher names all five functions',
-  ['超时归档', '归档清理', '快照占用', '收藏列表', '未分组体检'].every((label) =>
+ok('the switcher names all six functions',
+  ['快速上手', '批量归档', '删除归档', '快照清理', '缓存与未分组', '收藏清单'].every((label) =>
     tabNodes.some((b) => textOf(b).indexOf(label) >= 0)),
   JSON.stringify(tabNodes.map((b) => textOf(b))))
 const panels = visiblePanels(settingsTree)
-ok('every function gets exactly one panel', panels.length === 5,
+ok('every function gets exactly one panel', panels.length === 6,
   JSON.stringify(panels.map((p) => p.props['data-aff-panel'])))
 ok('exactly one panel is visible at a time',
   panels.filter((p) => (p.props.style || {}).display !== 'none').length === 1,
@@ -2339,9 +2371,9 @@ ok('the open tab is marked selected',
 // 0.33.0 changed the contract on purpose: panels are mounted on first visit
 // and then frozen, NOT all mounted up front. The frame of every panel still
 // renders (switching stays a display flip), but an unvisited body is null.
-ok('every panel frame is still rendered', panels.length === 5)
+ok('every panel frame is still rendered', panels.length === 6)
 const neverVisited = panels.filter((p) => (p.props || {})['data-aff-visited'] === '0')
-ok('panels that were never opened are not mounted', neverVisited.length === 4,
+ok('panels that were never opened are not mounted', neverVisited.length === 5,
   JSON.stringify(panels.map((p) => [p.props['data-aff-panel'], p.props['data-aff-visited']])))
 ok('an unvisited panel mounts no body',
   neverVisited.every((p) => (Array.isArray(p.children) ? p.children : []).every((k) => !k)),
@@ -2360,15 +2392,7 @@ ok('the switcher remembers the choice via localStorage',
 //   * turning it OFF is immediate and writes enabled:false,
 //   * turning it back ON still costs the full risk acknowledgement.
 await settle()
-hookCursor = 0
-effectQueue.length = 0
-expand(sections[0].component({}), 0)
-for (const fn of effectQueue) { try { fn() } catch (e) {} }
-await settle()
-hookCursor = 0
-effectQueue.length = 0
-const purgeTree0 = expand(sections[0].component({}), 0)
-for (const fn of effectQueue) { try { fn() } catch (e) {} }
+const purgeTree0 = await renderOnView('idle')
 const purgeText0 = textOf(purgeTree0)
 ok('the purge switch is on the idle card', /归档后顺带删除这些对话的快照/.test(purgeText0),
   purgeText0.slice(0, 200))
@@ -2450,10 +2474,12 @@ ok('settings page performs NO snapshot scan on render', scansOnRender === 0, Str
 // 0.33.0: the card mounts when its tab is opened, so open it.
 const snapTree = await goToView(settingsTree, 'snapshot-usage')
 ok('opening the snapshot tab mounts its card',
-  snapTree !== null && cardContaining(snapTree, /快照占用/) !== null)
+  snapTree !== null && panelOf(snapTree, 'snapshot-usage') !== null)
+// Whichever tab was open before the switch stays mounted afterwards. That was
+// 快速上手 (the landing tab) ever since 0.36.0 made it the default.
 ok('a panel that has been opened stays mounted',
-  (panelOf(snapTree, 'idle')?.props || {})['data-aff-visited'] === '1',
-  JSON.stringify((panelOf(snapTree, 'idle')?.props || {})['data-aff-visited']))
+  (panelOf(snapTree, 'start')?.props || {})['data-aff-visited'] === '1',
+  JSON.stringify((panelOf(snapTree, 'start')?.props || {})['data-aff-visited']))
 ok('snapshot card starts idle with an explicit button',
   /立即统计/.test(textOf(snapTree)) && /点「立即统计」/.test(textOf(snapTree)))
 ok('snapshot card explains the ledger in plain words', /history-file/.test(textOf(snapTree)))
@@ -2493,12 +2519,12 @@ ok('measured card does NOT re-scan after rendering the result',
   String(fetchCalls.filter((c) => String(c.url).endsWith('/snapshot-usage')).length - settingsBefore))
 
 // Nothing is selected yet, so the delete path must be disabled.
-const dryBtnIdle = findButtonByText(cardContaining(measuredTree, /快照占用/), /试算删除/)
+const dryBtnIdle = findButtonByText(panelOf(measuredTree, 'snapshot-usage'), /试算删除/)
 ok('delete is disabled until something is selected', dryBtnIdle !== null && dryBtnIdle.props.disabled === true)
 ok('card says what to do when nothing is selected', /先勾选要删的会话/.test(measuredText))
 
 // Tick the first row, re-render, and the delete button must wake up.
-const box = findCheckbox(cardContaining(measuredTree, /快照占用/), 0, /选择会话/)
+const box = findCheckbox(panelOf(measuredTree, 'snapshot-usage'), 0, /选择会话/)
 ok('each ledger row carries a checkbox', box !== null && typeof box.props.onChange === 'function')
 box?.props?.onChange?.()
 hookCursor = 0
@@ -2509,7 +2535,7 @@ const pickedText = textOf(pickedTree)
 ok('picking a row enables the dry run', /已选 1 个/.test(pickedText), pickedText.slice(0, 200))
 
 // Dry run first — the host must be asked for a PLAN, never a deletion.
-const dryBtn = findButtonByText(cardContaining(pickedTree, /快照占用/), /试算删除/)
+const dryBtn = findButtonByText(panelOf(pickedTree, 'snapshot-usage'), /试算删除/)
 snapshotCleanupRequests.length = 0
 dryBtn?.props?.onClick?.()
 await settle()
@@ -2532,7 +2558,7 @@ ok('confirmation says the recycle bin is used', /回收站/.test(confirmText))
 ok('confirmation states the real blast radius', /对话和磁盘文件都还在/.test(confirmText))
 
 // Only the explicit confirm may send dryRun:false.
-const confirmBtn = findButtonByText(cardContaining(confirmTree, /快照占用/), /确认删除/)
+const confirmBtn = findButtonByText(panelOf(confirmTree, 'snapshot-usage'), /确认删除/)
 snapshotCleanupRequests.length = 0
 confirmBtn?.props?.onClick?.()
 await settle()
@@ -2541,7 +2567,7 @@ ok('confirm sends dryRun:false and confirm:true',
   snapshotCleanupRequests[0]?.dryRun === false &&
   snapshotCleanupRequests[0]?.confirm === true,
   JSON.stringify(snapshotCleanupRequests[0]))
-ok('cancel button is offered next to confirm', findButtonByText(cardContaining(confirmTree, /快照占用/), /取消/) !== null)
+ok('cancel button is offered next to confirm', findButtonByText(panelOf(confirmTree, 'snapshot-usage'), /取消/) !== null)
 
 // ---------------------------------------------------------------------------
 // 0.30.0 — the age column, the pre-tick switch, and the favourites carve-out
@@ -2668,8 +2694,12 @@ for (const fn of effectQueue) { try { fn() } catch (e) {} }
 const delTree = await goToView(afterLoadTree, 'del')
 const delText = delTree === null ? '' : textOf(delTree)
 
+// 0.36.0: the title now spells out the blast radius ("永久"), because this is
+// the one tab in the page whose action cannot be undone.
 ok('the archive delete card is on the settings page',
-  /批量删除归档中「未收藏」的对话/.test(delText), delText.slice(0, 200))
+  /删除归档对话（永久）/.test(delText), delText.slice(0, 200))
+ok('the archive delete card says the delete is permanent',
+  /这一栏是永久删除/.test(delText) && /进不了回收站/.test(delText), delText.slice(0, 400))
 
 // 🔴 The archive is listed inline, not exported. A list you must export before
 // you can read it is a list nobody reads.
@@ -2696,7 +2726,7 @@ function delRowBoxes(tree) {
   walk(tree)
   return found
 }
-const delBoxes = delRowBoxes(cardContaining(delTree, /批量删除归档中/))
+const delBoxes = delRowBoxes(panelOf(delTree, 'del'))
 ok('a starred conversation is not offered for deletion',
   delBoxes.length === 2 &&
   !delBoxes.some((b) => String(b.props['aria-label']).includes('A favourited chat')),
@@ -2726,7 +2756,7 @@ const pickedText = textOf(pickedTree)
 ok('picking an archived row enables the dry run',
   /已选 1 个/.test(pickedText), pickedText.slice(0, 400))
 
-const dryBtn = findButtonByText(cardContaining(pickedTree, /批量删除归档中/), /试算删除/)
+const dryBtn = findButtonByText(panelOf(pickedTree, 'del'), /试算删除/)
 ok('the archive card offers a dry run',
   dryBtn !== null && typeof dryBtn.props.onClick === 'function')
 dryBtn?.props?.onClick?.()
@@ -2753,7 +2783,7 @@ ok('the confirmation prompt names the real loss',
   /已收藏的 1 条会被保留/.test(dryText),
   dryText.slice(0, 500))
 
-const confirmBtn = findButtonByText(cardContaining(dryTree, /批量删除归档中/), /确认删除/)
+const confirmBtn = findButtonByText(panelOf(dryTree, 'del'), /确认删除/)
 ok('a confirm button appears after the dry run',
   confirmBtn !== null && typeof confirmBtn.props.onClick === 'function')
 confirmBtn?.props?.onClick?.()
