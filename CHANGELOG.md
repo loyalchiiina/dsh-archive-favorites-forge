@@ -4,6 +4,62 @@ All notable changes to this project are documented here.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 this project uses [Semantic Versioning](https://semver.org/).
 
+## 0.33.0 — 2026-11-01
+
+### 新增：归档后可以顺带删掉快照（默认关闭，这是你 2026-11-01 的决定）
+
+这个版本改了一条此前写死的产品边界：**0.29.0 时明确写过「只做第 1 项，第 2/3/4 项永久不做」，
+自动清理一律不做。** 2026-11-01 你提出——既然快照只是「撤销到某一轮」用的，那对话一旦归档
+就不再需要撤销，所以归档时顺手把快照删掉是合理的。这个版本按你的要求做了，但把它锁在一个
+很窄的口子里：
+
+| 限制 | 为什么 |
+|---|---|
+| **默认关闭** | 装上不会自己动任何东西；要开必须先在「超时归档」卡片里勾选，还要再过一道风险确认 |
+| **只在「本卡片归档」这一个动作里触发** | 不做定时、不做体积上限、不做年龄扫描——那三样仍然永久不做 |
+| **仍然送 Windows 回收站** | 走的是和手动删除同一条 `sendToRecycleBin` 路径，误删可恢复 |
+| **只对这一次请求里归档成功的会话生效** | `archived.length > 0` 才算，撤回、查看、统计都不会触发 |
+
+⚠️ **边界（必须知道）**：DSH 的 `@deepseek-ai/dsh-workspace` 的 `archiveSession` **不发任何事件**，
+所以「你在侧栏手动右键归档」这个动作本插件收不到通知，这个开关管不到它。它只覆盖
+**本插件「超时批量归档」卡片上那个归档按钮**归档成功的会话。
+
+### 新增的落点
+
+- 宿主 `lib/index.js`：新增 `archive-purge-policy.json`（第三个独立策略文件，和快照预勾选、
+  归档删除预勾选互不影响）；新增 `GET|POST /archive-purge-policy`；`/idle-archive` 响应新增
+  `purged` / `purgeBytes` / `purgeFailures`。
+- 客户端 `lib/client.js`：`usePreTickPolicy` 之外新增 `loadPurgePolicy` / `savePurgePolicy`，
+  「超时批量归档」卡片里加开关 `归档后删除快照开关` + 两段式风险确认；归档结果区多两行
+  「顺带删除了 N 个会话的快照（送回收站，释放 X）」/「有 N 个会话的快照没删成（首个原因：…）」。
+
+### 流畅度：面板改成惰性挂载 + 冻结
+
+设置页五个功能之前是「全部渲染、只显示一个」，切标签时五张卡都会跟着重渲染，其中两张带长列表。
+现在：
+
+- **没打开过的面板不挂载**（`body = null`）——首帧只渲染你当前看的那一张。
+- **打开过但当前隐藏的面板复用上一次的元素引用**（`paintCache`）——React 直接跳过整棵子树，
+  阈值输入每敲一键不再连带重渲染另外四张卡。代价是隐藏面板的内容可能落后一帧，但它在变可见的
+  那一刻会立即重建，用户看不到。
+- 收藏判断从「每个归档 id 各算一遍」改成「懒建一次归一化集合」（309 × 75 ≈ 23k 次比较 → 一次）。
+
+### 修复
+
+- 面板惰性化之后，`ArchiveFavoritesSection` 的挂载 effect 仍然自己手写了一份 `/archived` 请求，
+  只拷 `archivedSessionIds` —— 于是新加的 `entries` 被丢掉，卡片显示「归档共 0 条」，要按刷新才对。
+  现在挂载 effect 只调用 `loadArchived()`，`/archived` 全插件只有一个读取点。
+- 归档来源 `workspace:3` 这种健康来源曾被渲染成「**不可用**：workspace:3」（卡片只认空串、
+  `starting` 和 `registry*`）。现在统一走 `describeSource()`，健康来源正常显示「官方工作区记录（3 条）」。
+- 探针 fetch stub 的 `/archive-purge-policy` 分支没走统一的 `payload` 返回形状，导致
+  `api()` 抛错被 catch 吞掉，表现成「开关刚打开就自己关掉」——这是探针的 bug，已修。
+
+### 验证
+
+五套探针合计 **596 条全绿**：`probe-client` 330 / `probe-snapshot-usage` 83 /
+`probe-filehistory` 39 / `probe-ungrouped-guard` 86 / `probe-digest` 58。
+宿主策略冒烟 12 条全绿（三个策略互不影响、`enabled:'yes'` 读回 false、策略写盘落在自己的文件里）。
+
 ## 0.32.0 — 2026-11-01
 
 ### 改动：五个大功能收成一个「功能切换条」，一屏只显示一个面板

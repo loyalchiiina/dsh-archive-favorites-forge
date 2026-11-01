@@ -402,6 +402,19 @@ auto-delete.
   would let a cautious snapshot threshold silently authorise deleting chats, so
   the two policies live in different files.
 
+### Limits of the archive-purge switch
+
+The 超时归档 card carries a switch, **off by default**, called 归档后删除快照. When it is on, every
+conversation this card archives also has its `history-file/` ledger sent to the Windows recycle bin.
+
+- Off by default, and turning it on takes two gestures: tick the switch, then confirm in the risk box.
+- It only fires inside the archive request you just made. Refreshing, undoing, measuring and
+  previewing never touch a ledger.
+- **Conversations archived from the official sidebar are out of reach**: `archiveSession` in
+  `@deepseek-ai/dsh-workspace` emits nothing, so the plugin never learns about them.
+- Deletion still goes to the recycle bin. There is no timer, no size ceiling and no age sweep —
+  those three stay off the table permanently.
+
 ### Limits of the archive-delete card
 
 - **The list comes from the live archive registry, not a cache.** `/archived`

@@ -501,6 +501,13 @@ globalThis.fetch = async (url, init) => {
     snapshotUsageCalls += 1
     payload = { ...SNAPSHOT_USAGE_REPORT, policy: { ...snapshotPolicy } }
   }
+  else if (url.endsWith('/archive-purge-policy')) {
+    if (body && body.policy) {
+      archivePurgePolicyWrites.push(body.policy)
+      archivePurgePolicy = { enabled: body.policy.enabled === true }
+    }
+    payload = { ok: true, policy: { ...archivePurgePolicy } }
+  }
   else if (url.endsWith('/snapshot-policy')) {
     if (body && body.policy) {
       snapshotPolicyWrites.push(body.policy)
@@ -549,6 +556,8 @@ globalThis.fetch = async (url, init) => {
 // 0.31.0: the batch-delete card keeps its own saved pre-tick policy, separate
 // from the snapshot card — deleting a conversation and deleting its undo
 // ledger have different blast radii, so the two thresholds must not be shared.
+let archivePurgePolicy = { enabled: false }
+const archivePurgePolicyWrites = []
 let archiveDeletePolicy = { autoSelect: false, hours: 720 }
 const archiveDeletePolicyWrites = []
 const archiveDeleteRequests = []
@@ -1714,7 +1723,7 @@ ok('humanDuration tolerates junk instead of printing NaN',
   // the export result — so the bound is generous on purpose: what is being
   // asserted is "same component, in that order", not a layout pixel count.
   ok('the export result is rendered inside the idle card',
-    /key: "idle"[\s\S]{0,12000}?exportInfo === null/.test(bundleSource))
+    /key: "idle"[\s\S]{0,18000}?exportInfo === null/.test(bundleSource))
   // The settings page's own cards. A bare COUNT over the whole bundle stopped
   // being meaningful once 0.26.0 added a second component with its own pushed
   // children, so this asserts the cards by name instead — that is what "the
@@ -2290,6 +2299,23 @@ function visiblePanels(tree) {
   const kids = Array.isArray(tree?.children) ? tree.children : []
   return kids.filter((k) => k && typeof k === 'object' && (k.props || {})['data-aff-panel'])
 }
+/**
+ * 0.33.0: panels mount on FIRST VISIT, so a card that has never been opened
+ * does not exist in the tree at all. Anything reaching into a non-default card
+ * has to press its tab first — the same gesture a user makes. Returns the
+ * re-rendered tree, or null when the tab is missing.
+ */
+async function goToView(tree, key) {
+  const btn = tabButtons(tree).find((b) => (b.props || {})['data-aff-view'] === key)
+  if (!btn || typeof btn.props.onClick !== 'function') return null
+  btn.props.onClick()
+  hookCursor = 0
+  effectQueue.length = 0
+  const next = expand(sections[0].component({}), 0)
+  for (const fn of effectQueue) { try { fn() } catch (e) {} }
+  await settle()
+  return next
+}
 const tabNodes = tabButtons(settingsTree)
 ok('the section renders a function switcher', tabNodes.length === 5,
   JSON.stringify(tabNodes.map((b) => textOf(b))))
@@ -2309,21 +2335,109 @@ ok('the first function is the one that opens',
 ok('the open tab is marked selected',
   tabNodes.filter((b) => b.props['aria-selected'] === 'true').length === 1,
   JSON.stringify(tabNodes.map((b) => [textOf(b), b.props['aria-selected']])))
-ok('switching tabs does not unmount the other panels',
-  panels.length === 5)
+// 0.33.0 changed the contract on purpose: panels are mounted on first visit
+// and then frozen, NOT all mounted up front. The frame of every panel still
+// renders (switching stays a display flip), but an unvisited body is null.
+ok('every panel frame is still rendered', panels.length === 5)
+const neverVisited = panels.filter((p) => (p.props || {})['data-aff-visited'] === '0')
+ok('panels that were never opened are not mounted', neverVisited.length === 4,
+  JSON.stringify(panels.map((p) => [p.props['data-aff-panel'], p.props['data-aff-visited']])))
+ok('an unvisited panel mounts no body',
+  neverVisited.every((p) => (Array.isArray(p.children) ? p.children : []).every((k) => !k)),
+  JSON.stringify(neverVisited.map((p) => p.children)))
 ok('the switcher remembers the choice via localStorage',
   source.includes('dsh-aff-settings-view'),
   'client.js does not persist the selected view')
 
+{
+// --- 0.33.0: archive-triggered snapshot purge -----------------------------
+//
+// This is the first switch in the plugin that authorises a destructive action
+// WITHOUT the user pressing a delete button, so the assertions hold it to the
+// two-step gesture: off by default, a risk block on the way on, nothing written
+// until the risk is acknowledged.
+await settle()
+hookCursor = 0
+effectQueue.length = 0
+const purgeTree0 = expand(sections[0].component({}), 0)
+for (const fn of effectQueue) { try { fn() } catch (e) {} }
+const purgeText0 = textOf(purgeTree0)
+ok('the purge switch is on the idle card', /归档后顺带删除这些对话的快照/.test(purgeText0),
+  purgeText0.slice(0, 200))
+const purgeBox0 = findCheckbox(purgeTree0, 0, /归档后删除快照开关/)
+ok('the purge switch is an unchecked checkbox',
+  purgeBox0 !== null && purgeBox0.props.checked === false)
+ok('the purge switch states it is off by default', /默认关闭/.test(purgeText0), purgeText0.slice(0, 400))
+ok('nothing was written to the purge policy yet', archivePurgePolicyWrites.length === 0,
+  JSON.stringify(archivePurgePolicyWrites))
+ok('the purge switch never promises a silent cleanup',
+  /除这个归档动作外不会自动清理任何东西/.test(purgeText0) || /默认关闭/.test(purgeText0))
+
+purgeBox0?.props?.onChange?.()
+await settle()
+hookCursor = 0
+effectQueue.length = 0
+const purgeRiskTree = expand(sections[0].component({}), 0)
+for (const fn of effectQueue) { try { fn() } catch (e) {} }
+const purgeRiskText = textOf(purgeRiskTree)
+ok('turning the purge switch on asks for a risk acknowledgement first',
+  /我知道风险，打开/.test(purgeRiskText), purgeRiskText.slice(0, 400))
+ok('the purge risk box names the recycle bin', /回收站/.test(purgeRiskText))
+ok('the purge risk box names the real loss', /撤销到某一轮/.test(purgeRiskText))
+ok('the purge risk box states the path it cannot cover',
+  /侧栏手动归档/.test(purgeRiskText), purgeRiskText.slice(0, 600))
+ok('acknowledging is required before anything is persisted',
+  archivePurgePolicyWrites.length === 0, JSON.stringify(archivePurgePolicyWrites))
+
+const ackBtn = findButtonByText(purgeRiskTree, /我知道风险，打开/)
+ackBtn?.props?.onClick?.()
+await settle()
+ok('acknowledging persists enabled:true',
+  archivePurgePolicyWrites.length === 1 && archivePurgePolicyWrites[0]?.enabled === true,
+  JSON.stringify(archivePurgePolicyWrites))
+// Two passes on purpose: the first fires the mount effect (which re-reads the
+// policy from the stub and settles any in-flight GET), the second is asserted on.
+hookCursor = 0
+effectQueue.length = 0
+expand(sections[0].component({}), 0)
+for (const fn of effectQueue) { try { fn() } catch (e) {} }
+await settle()
+hookCursor = 0
+effectQueue.length = 0
+const purgeOnTree = expand(sections[0].component({}), 0)
+for (const fn of effectQueue) { try { fn() } catch (e) {} }
+const purgeOnText = textOf(purgeOnTree)
+
+ok('the purge switch reads as enabled afterwards', /已开启/.test(purgeOnText), purgeOnText.slice(0, 400))
+const purgeBoxOn = findCheckbox(purgeOnTree, 0, /归档后删除快照开关/)
+ok('the enabled purge switch is checked', purgeBoxOn !== null && purgeBoxOn.props.checked === true)
+
+archivePurgePolicyWrites.length = 0
+purgeBoxOn?.props?.onChange?.()
+await settle()
+ok('turning the purge switch off persists enabled:false',
+  archivePurgePolicyWrites.length === 1 && archivePurgePolicyWrites[0]?.enabled === false,
+  JSON.stringify(archivePurgePolicyWrites))
+}
+
+
 // 🔴 The constraint: rendering is IDLE. Nothing may have been measured yet.
 const scansOnRender = fetchCalls.filter((c) => String(c.url).endsWith('/snapshot-usage')).length - settingsBefore
 ok('settings page performs NO snapshot scan on render', scansOnRender === 0, String(scansOnRender))
+
+// 0.33.0: the card mounts when its tab is opened, so open it.
+const snapTree = await goToView(settingsTree, 'snapshot-usage')
+ok('opening the snapshot tab mounts its card',
+  snapTree !== null && cardContaining(snapTree, /快照占用/) !== null)
+ok('a panel that has been opened stays mounted',
+  (panelOf(snapTree, 'idle')?.props || {})['data-aff-visited'] === '1',
+  JSON.stringify((panelOf(snapTree, 'idle')?.props || {})['data-aff-visited']))
 ok('snapshot card starts idle with an explicit button',
-  /立即统计/.test(textOf(settingsTree)) && /点「立即统计」/.test(textOf(settingsTree)))
-ok('snapshot card explains the ledger in plain words', /history-file/.test(textOf(settingsTree)))
+  /立即统计/.test(textOf(snapTree)) && /点「立即统计」/.test(textOf(snapTree)))
+ok('snapshot card explains the ledger in plain words', /history-file/.test(textOf(snapTree)))
 
 // Press the button. This is the ONLY path that may scan.
-const measureBtn = findButtonByText(settingsTree, /立即统计/)
+const measureBtn = findButtonByText(snapTree, /立即统计/)
 ok('snapshot card button is a real clickable button', measureBtn !== null && typeof measureBtn.props.onClick === 'function')
 measureBtn?.props?.onClick?.()
 await settle()
@@ -2526,9 +2640,11 @@ await settle()
 // Second pass: /archived has landed by now, so the rows exist.
 hookCursor = 0
 effectQueue.length = 0
-const delTree = expand(sections[0].component({}), 0)
+const afterLoadTree = expand(sections[0].component({}), 0)
 for (const fn of effectQueue) { try { fn() } catch (e) {} }
-const delText = textOf(delTree)
+// 0.33.0: this card also mounts only when its own tab is opened.
+const delTree = await goToView(afterLoadTree, 'del')
+const delText = delTree === null ? '' : textOf(delTree)
 
 ok('the archive delete card is on the settings page',
   /批量删除归档中「未收藏」的对话/.test(delText), delText.slice(0, 200))
