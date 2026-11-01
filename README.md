@@ -77,7 +77,7 @@ so it composes with the shipped UI instead of patching it.
 | ⑮ | **隐藏「未分组」分组**：一个纯视图开关（**默认开启**），把侧栏底部那个分组（连组头）整体藏起来，不删任何对话 | **Hide the "Ungrouped" group** — a pure view switch (**on by default**) that hides the whole bucket (header and rows) from the sidebar; nothing is deleted |
 | ⑯ | **新窗口继续对话**：把长对话蒸馏成一份交接书（用户要求时间线 + 任务进度清单 + 团队任务 + 最近进展），先弹窗报告「检测到任务进行到 第 N 轮」，确认后新开一个 `新对话-<原名>`、**继承原对话的预设智慧体**并自动把交接书发过去 | **Continue in a new window** — distils a long conversation into a handover brief (requirement timeline, task progress, team tasks, latest progress), reports "you are N turns in" first, then on confirm opens `新对话-<original title>` with the **original agent preset inherited** and sends the brief as its first message |
 | ⑰ | **快照清理（统计 + 手动删除）**：设置页「快照清理」栏点「立即统计」才扫一次（渲染时不扫、无定时器），列出每个会话 `history-file/` 占了多少、多少个快照文件、多少条记录、**不活跃时长**；**收藏的会话不进可删列表**，只在汇总行单独报；可选打开「超时预勾选」（默认关，开前须确认风险）自动勾上超时行，删除仍需先试算再二次确认，删的目录进 Windows 回收站。**绝不自动清理** | **Snapshot usage & manual cleanup** — one press of "measure now" scans the ledger directories once (never on render, never on a timer), reporting bytes, blob count, row count, **idle time and last snapshot time** per conversation, in the shared six columns (see ⑱); **favourited conversations are lifted out of the cleanup list** and reported on a separate summary line; an optional "pre-tick idle rows" switch (off by default, risk acknowledgement required) ticks rows past the threshold after each scan; deletion still needs a dry run plus a confirm, and the directory goes to the recycle bin. **Nothing is ever pruned automatically** |
-| ⑱ | **列表统一六列**：**每一栏**的列表都是同一套列 —— `文件大小 \| 时长 \| 对话名称 \| 文件数量 \| 工作区名称 \| 时间`，由一个共用行组件渲染，缺失值统一显示破折号而不是留空（详见 "The six-column row format"）；文件大小与文件数量取自各会话的快照账本，且**只在你点开那一栏时才量**，单次上限 120 行、并发 8 | **One row format everywhere** — every list on the page uses the same six columns (`文件大小 \| 时长 \| 对话名称 \| 文件数量 \| 工作区名称 \| 时间`), drawn by a single shared row component, with an em dash for a cell that genuinely has no value instead of a blank one; size and file count come from the **whole session directory** (transcript + ledger — i.e. what deleting that row frees), the workspace name comes from the workspace registry title (falling back to the folder name), and all of it is measured **only when you open that panel**, capped at 120 rows per request with a fan-out of 8 |
+| ⑱ | **列表统一六列**：**每一栏**的列表都是同一套列 —— `文件大小 \| 时长 \| 对话名称 \| 文件数量 \| 工作区名称 \| 时间`，由一个共用行组件渲染，缺失值统一显示破折号而不是留空（详见 "The six-column row format"）；文件大小与文件数量取自该会话的**整个目录**（转录 + 快照账本 = 删掉它能腾出多少），工作区名称取工作区注册表标题（没有标题才退回文件夹名），且**只在你点开那一栏时才量**，单次上限 120 行、并发 8；**0.38.0 起列顺序可拖动、列宽可拖拽调整**，表头与行共用同一套网格所以永远对齐 | **One row format everywhere** — every list on the page uses the same six columns (`文件大小 \| 时长 \| 对话名称 \| 文件数量 \| 工作区名称 \| 时间`), drawn by a single shared row component, with an em dash for a cell that genuinely has no value instead of a blank one; size and file count come from the **whole session directory** (transcript + ledger — i.e. what deleting that row frees), the workspace name comes from the workspace registry title (falling back to the folder name), and all of it is measured **only when you open that panel**, capped at 120 rows per request with a fan-out of 8. **Since 0.38.0 the columns are draggable** (drag a caption to reorder, drag its right edge to resize) and caption plus rows share one grid, so they always line up |
 
 ### Where each feature lives
 
@@ -479,7 +479,7 @@ this card archives also has its `history-file/` ledger sent to the Windows recyc
   counter it mounted with and only re-runs when that counter actually changes, so
   the old promise (no scan on render, no timer) is intact.
 
-### The six-column row format (since 0.37.0)
+### The six-column row format (since 0.37.0, adjustable since 0.38.0)
 
 **Every list** on the settings page — 快照清理, 删除归档, the idle candidates in 批量归档, 未分组体检, 孤儿缓存, 收藏清单 — renders through the same six columns, always in this order:
 
@@ -488,6 +488,14 @@ this card archives also has its `history-file/` ledger sent to the Windows recyc
 ```
 
 One `SessionRow` component draws every row; one `ListHead` component draws every caption (the column names live in the `LIST_COLUMNS` constant). No panel builds its own columns, so the same conversation looks the same wherever you meet it.
+
+#### 0.38.0 · the caption and the rows are one grid, and the columns move
+
+- **Why a grid.** Through 0.37.x each row was a flex line, but row tails were not the same width: 收藏清单 carries 已归档 + ID + 路径 + 取消收藏 (~205px), 未分组 carries a 建议 badge (~116px), 孤儿缓存 only a 62px badge. The caption has no tail, so in every panel the last column was pushed a different distance left — which is exactly what "the columns do not line up" looked like. No amount of width tuning fixes that; caption and rows now share one `gridTemplateColumns`, and the caption reserves an equally wide track for the tail (`TAIL_ADVISE` / `TAIL_BADGE` / `TAIL_ACTIONS`).
+- **Drag a caption to move that column.** Drop it on another caption and it takes that slot. All six columns move in every panel at once — they read one layout.
+- **Drag the grip on a caption right edge to resize.** Live while dragging, written once on release (a resize is not a reason to hit the disk per pixel). Double-click the grip to cycle default / +60 / +140. The grip is focusable: arrow keys step 10px, Enter cycles, Backspace restores that column.
+- **Order and widths are stored locally** (`localStorage` key `dsh-aff-column-layout`), so every panel and every restart agrees. Once you have changed something a 「恢复默认列」 control appears in the header — it is hidden while the layout is still the default, because a reset button on a page whose default is already right is an invitation to press it.
+- **A broken stored layout cannot eat a column.** Anything read back passes `normaliseColumnLayout`: unknown keys are dropped, missing ones are appended in default order, widths are clamped to each column min/max. One missing column means one missing fact in every list, so the file is never trusted.
 
 - **The dash is not decoration.** A cell that genuinely has no data prints `—` — it is not left blank and the column is not dropped. A blank cell pushes every later column one slot to the left, which is exactly how two lists end up looking like two different schemas.
 - **The dash is a promise.** No cell is ever filled by scanning the disk behind your back. For real numbers, press that card's own button (立即统计 / 诊断 / 扫描) or just open the panel.

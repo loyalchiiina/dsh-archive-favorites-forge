@@ -4,6 +4,98 @@ All notable changes to this project are documented here.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 this project uses [Semantic Versioning](https://semver.org/).
 
+## 0.38.0 — 2026-11-02
+
+### 表头和行不再是两套排版：换成一个网格
+
+0.37.x 的每一行是 flex 行，表头也是 flex 行。问题在于**行尾宽度不一致**：
+
+| 列表 | 行尾内容 | 宽度 |
+|---|---|---|
+| 收藏清单 | 已归档 + ID + 路径 + 取消收藏 | ~205px |
+| 未分组体检 | 建议：删到回收站 | ~116px |
+| 孤儿缓存 | 置顶 / 已归档徽章 | 62px |
+| 快照清理 / 删除归档 / 批量归档 | 无 | 0 |
+
+表头没有行尾，于是每个面板的最后一列被推得不一样远——截图里就是「列不对齐」。
+**这个问题调列宽治不了**：只要表头不为行尾付账，总有一列会漂。所以：
+
+- `ListHead` 与 `SessionRow` 现在**共用同一个** `gridTemplateColumns`，由 `columnTemplate()` 生成。
+- 表头通过 `tail` 参数为行尾预留等宽轨道（`TAIL_ADVISE = 116` / `TAIL_BADGE = 62` / `TAIL_ACTIONS = 205`），
+  行通过 `tailWidth` 声明自己要多少。两边读同一个数，所以对齐是**构造出来的**，不是调出来的。
+
+### 列顺序可以拖
+
+- 每个列标题是 `draggable` 的，拖到另一个列标题上松手就插到那个位置（`moveColumn`）。
+- 六列在**每一栏同时换位**——它们读同一份模块级 `COLUMN_LAYOUT`。
+
+### 列宽可以调，三种手势
+
+| 手势 | 效果 |
+|---|---|
+| 拖列标题右侧竖线 | 实时改宽（`applyColumnWidth`，不落盘不重绘整页），**松手才写一次盘** |
+| 双击竖线 | 在「默认 / +60 / +140」三档循环（`cycleColumnWidth`） |
+| 竖线 Tab 聚焦后 ←/→ | 每次 ±10px；Enter 换档；Backspace 恢复该列默认 |
+
+竖线是 `role="separator"` + `aria-label="调整「X」列宽"`，所以不是鼠标专属的秘密。
+
+### 存在本机，坏存档吃不掉一列
+
+- localStorage 键 `dsh-aff-column-layout`，值 = `{ order: [...], widths: {...} }`。
+- 只有**真的改过**才写盘；改回默认会 `removeItem`（`columnIsCustomised()` 判定）。
+- 读回来一律过 `normaliseColumnLayout()`：不认识的列丢掉、缺的列按默认顺序补回、宽度夹在每列 `min`/`max` 之间。
+  **少一列等于每一栏都少一个事实**，所以宁可忽略存档，也不相信存档。
+- 改过之后页头多出「恢复默认列」（`key: "columns"`，`resetColumnLayout`）；**没改过就不渲染**——
+  在一个默认值本来就对的页面上摆一个诱导按钮，是另一种 bug。
+
+### 列宽与默认值
+
+| 列 | 默认 | 最小 | 最大 | 轨道 |
+|---|---|---|---|---|
+| 文件大小 | 60 | 40 | 200 | 固定 px |
+| 时长 | 56 | 40 | 180 | 固定 px |
+| 对话名称 | 150 | 90 | 560 | `minmax(Wpx, 1.6fr)`（吃掉剩余宽度） |
+| 文件数量 | 66 | 44 | 200 | 固定 px |
+| 工作区名称 | 96 | 56 | 360 | `minmax(Wpx, max(2W,160)px)` |
+| 时间 | 100 | 84 | 220 | 固定 px |
+
+`LIST_SCROLL`（横向滚动）与「不放不下就滚、绝不压缩名称」这条 0.37.2 的承诺原样保留：
+网格给每列一个下限，面板装不下时**滚**，而不是把「对话名称」压成 `De…`。
+
+### 顺修
+
+- 收藏行尾的「已归档 + 三个按钮」原来是 flex 容器，宽度变化时按钮会折成两行，把那一行撑高、
+  又破坏对齐——现在 `whiteSpace: "nowrap"`，且轨道按实测宽度给足（205px）。
+- 快速上手新增一节「表格的列可以自己排」，把三种手势和持久化讲清楚。
+- `guide-refresh` 两行文案更新为「按栏分发 + 刚刚刷新：… + 打开页面仍不扫盘」的实际行为。
+
+### 探针
+
+七套探针 **698 条全绿**（0.37.2 是 689）：probe-client **364** / probe-snapshot-usage 89 /
+probe-filehistory 39 / probe-ungrouped-guard 86 / probe-digest 58 / probe-sidebar-watch 43 /
+probe-delete-ledger 19。probe-client 新增 9 条：
+
+- `the caption and every row share one grid template` —— `columnTemplate({` 与 `display: "grid"` 各 ≥2 处。
+- `every column still has a floor width` —— 每列 `min` 与 `minmax(` 都在。
+- `a caption can be dragged to another position` —— `draggable: true` + `onDragStart` / `onDrop` + `moveColumn(from, key)`。
+- `the column order and widths survive a restart` —— 常量、`setItem`、`getItem` 三处。
+- `a stored layout can never lose a column` —— `normaliseColumnLayout` 的两条守卫原文。
+- `a column can be resized three ways` —— `beginColumnResize` / `cycleColumnWidth` / `ArrowRight`。
+- `a resize is not written to disk per pixel` —— `applyColumnWidth(key, startWidth + …)` 在 move 里，
+  `saveColumnLayout()` 在 `onUp` 里。
+- `the caption reserves the tail its rows carry` —— 三个 `tail:` 与三个 `tailWidth:` 成对。
+- `resetting the columns is only offered once something changed` —— `if (columnIsCustomised())` 守卫 + `恢复默认列`。
+
+被替换掉的一条：`the row keeps a floor width so columns cannot be squeezed away`。
+它断言的是 `ROW_MIN_WIDTH` / `NAME_MIN_WIDTH` 两个常量，而 0.38.0 把「下限」从
+「整行一个最小宽度 + 面板横滚」改成了「每列一个 min/max + `minmax()` 轨道」——下限还在，只是搬了位置，
+所以断言也跟着搬到 `every column still has a floor width`。
+
+### 升级
+
+宿主与客户端两半都改了，**必须完全退出 DSH 再打开**；刷页面拿不到新版。
+列宽/列序存在本机 localStorage，跨重启保留；想回到默认点页头「恢复默认列」。
+
 ## 0.37.2 — 2026-11-01
 
 ### 同一列两种颜色，等于两列

@@ -2669,11 +2669,66 @@ ok('measured card warns what deletion costs', /撤销到某一轮/.test(measured
   ok('a narrow list scrolls instead of crushing the name column',
     rowSource.includes('var LIST_SCROLL = { overflowX: "auto", overflowY: "auto" }') &&
     (rowSource.match(/LIST_SCROLL\)/g) || []).length >= 5, String((rowSource.match(/LIST_SCROLL\)/g) || []).length))
-  ok('the row keeps a floor width so columns cannot be squeezed away',
-    rowSource.includes('var ROW_MIN_WIDTH = "700px"') &&
-    rowSource.includes('var NAME_MIN_WIDTH = "110px"') &&
-    rowSource.includes('minWidth: ROW_MIN_WIDTH') &&
-    rowSource.includes('minWidth: NAME_MIN_WIDTH'))
+  // 0.38.0 — the floor width moved from "give every row a min-width and let
+  // the panel scroll" to a real grid: caption and rows read ONE template, so a
+  // row that carries buttons cannot push its own 时间 cell left of the caption.
+  // The floor still exists, it just lives per column now (min/max in COLUMN_DEFS
+  // and minmax() tracks in columnTemplate) instead of as one row min-width.
+  ok('the caption and every row share one grid template',
+    (rowSource.match(/columnTemplate\(\{/g) || []).length >= 2 &&
+    (rowSource.match(/display: "grid"/g) || []).length >= 2,
+    String((rowSource.match(/columnTemplate\(\{/g) || []).length))
+  ok('every column still has a floor width',
+    rowSource.includes('min: 40') && rowSource.includes('min: 90') &&
+    rowSource.includes('minmax('),
+    'per-column min/max')
+
+  // 0.38.0 — the layout is adjustable, and it belongs to the reader.
+  const sectionStart = rowSource.indexOf('function ListHead(props)')
+  const sectionEnd = rowSource.indexOf('function usePreTickPolicy(')
+  const headSource = rowSource.slice(sectionStart, sectionEnd)
+  ok('a caption can be dragged to another position',
+    /draggable: true/.test(headSource) &&
+    /onDragStart/.test(headSource) && /onDrop/.test(headSource) &&
+    /moveColumn\(from, key\)/.test(headSource),
+    'drag handlers')
+  ok('the column order and widths survive a restart',
+    rowSource.includes('var COLUMN_LAYOUT_KEY = "dsh-aff-column-layout"') &&
+    /localStorage\.setItem\(COLUMN_LAYOUT_KEY/.test(rowSource) &&
+    /localStorage\.getItem\(COLUMN_LAYOUT_KEY\)/.test(rowSource),
+    'persistence')
+  ok('a stored layout can never lose a column',
+    /if \(!columnDef\(key\) \|\| seen\[key\] === true\) continue;/.test(rowSource) &&
+    /COLUMN_DEFS\.forEach\(function \(def\) \{\s*if \(seen\[def\.key\] !== true\) order\.push\(def\.key\);/.test(rowSource),
+    'normalise keeps every key')
+  ok('a column can be resized three ways',
+    /onMouseDown: function \(event\) \{ beginColumnResize\(event, key\); \}/.test(headSource) &&
+    /onDoubleClick/.test(headSource) && /cycleColumnWidth\(key\)/.test(headSource) &&
+    /event\.key === "ArrowRight"/.test(headSource),
+    'drag / double-click / arrow keys')
+  ok('a resize is not written to disk per pixel',
+    /function applyColumnWidth/.test(rowSource) &&
+    /function setColumnWidth/.test(rowSource) &&
+    rowSource.includes('applyColumnWidth(key, startWidth + (moveEvent.clientX - startX))') &&
+    /function onUp\(\) \{[\s\S]*?saveColumnLayout\(\);/.test(rowSource),
+    'live apply, save on release')
+  ok('the caption reserves the tail its rows carry',
+    rowSource.includes('tail: TAIL_ADVISE') &&
+    rowSource.includes('tail: TAIL_BADGE') &&
+    rowSource.includes('tail: TAIL_ACTIONS') &&
+    rowSource.includes('tailWidth: TAIL_ADVISE') &&
+    rowSource.includes('tailWidth: TAIL_BADGE') &&
+    rowSource.includes('tailWidth: TAIL_ACTIONS'),
+    'tail tracks')
+  ok('resetting the columns is only offered once something changed',
+    /if \(columnIsCustomised\(\)\) \{/.test(rowSource) &&
+    rowSource.includes('key: "columns"') &&
+    rowSource.includes('恢复默认列'),
+    'conditional reset row')
+  ok('the column layout repaints every list from one place',
+    /COLUMN_LAYOUT_BUMP = function \(\) \{ columnRevPair\[1\]\(columnRevPair\[0\] \+ 1\); \};/.test(rowSource) &&
+    /if \(typeof COLUMN_LAYOUT_BUMP === "function"\) COLUMN_LAYOUT_BUMP\(\);/.test(rowSource),
+    'one bump')
 }
 {
   const favTree = await renderOnView('fav')
