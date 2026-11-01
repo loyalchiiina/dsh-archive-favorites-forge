@@ -462,7 +462,24 @@ globalThis.fetch = async (url, init) => {
   const body = init && init.body ? JSON.parse(init.body) : null
   let payload = { ok: true }
   if (url.endsWith('/favorites')) payload = { ok: true, favorites: FAKE_FAVORITES }
-  else if (url.endsWith('/archived')) payload = { ok: true, archivedSessionIds: FAKE_ARCHIVED }
+  else if (url.endsWith('/archived')) {
+    // 0.31.0: the batch-delete card renders the archive as a list, so the stub
+    // has to hand over titles, workspace folders and ages alongside the ids.
+    // `session-fav-1` is starred (protected), the two plain ones are deletable,
+    // and one of them is deliberately old so a threshold can single it out.
+    const now = Date.now()
+    payload = {
+      ok: true,
+      archivedSessionIds: FAKE_ARCHIVED,
+      source: "workspace",
+      count: FAKE_ARCHIVED.length,
+      entries: [
+        { sessionId: 'session-fav-1', title: 'A favourited chat', cwd: 'C:\\fake\\alpha', blank: false, updatedAt: now - 60 * 24 * 3600000, idleMs: 60 * 24 * 3600000 },
+        { sessionId: 'session-plain-1', title: 'Plain old chat', cwd: 'C:\\fake\\beta', blank: false, updatedAt: now - 50 * 24 * 3600000, idleMs: 50 * 24 * 3600000 },
+        { sessionId: 'session-plain-2', title: '', cwd: 'C:\\fake\\gamma', blank: true, updatedAt: null, idleMs: null },
+      ],
+    }
+  }
   else if (url.endsWith('/favorite')) payload = { ok: true, favorites: FAKE_FAVORITES }
   else if (url.endsWith('/session-info')) payload = { ok: true, sessionId: body?.sessionId, path: 'C:\\fake\\sessions\\' + String(body?.sessionId) + '\\session.v4.jsonl.zstd' }
   else if (url.includes('/idle-archive')) {
@@ -502,12 +519,39 @@ globalThis.fetch = async (url, init) => {
       bytesFreed: body?.dryRun === true ? 1234567 : 0,
     }
   }
+  else if (url.endsWith('/archive-delete-policy')) {
+    if (body && body.policy) {
+      archiveDeletePolicyWrites.push(body.policy)
+      archiveDeletePolicy = { ...archiveDeletePolicy, ...body.policy }
+    }
+    payload = { ok: true, policy: { ...archiveDeletePolicy } }
+  }
+  else if (url.endsWith('/archive-delete')) {
+    archiveDeleteRequests.push(body)
+    payload = {
+      ok: true,
+      dryRun: body?.dryRun === true,
+      deleted: body?.dryRun === true ? (body?.sessionIds ?? []) : [],
+      wouldDelete: body?.sessionIds ?? [],
+      skipped: [],
+      failures: [],
+      missing: [],
+      refusedFavorites: [],
+    }
+  }
   else if (url.endsWith('/delete')) {
     deletedRequests.push(body?.sessionIds ?? [])
     payload = { ok: true, deleted: deleteShouldSucceed ? (body?.sessionIds ?? []) : [], skipped: [], failures: [] }
   }
   return { ok: true, status: 200, json: async () => payload }
 }
+
+// 0.31.0: the batch-delete card keeps its own saved pre-tick policy, separate
+// from the snapshot card — deleting a conversation and deleting its undo
+// ledger have different blast radii, so the two thresholds must not be shared.
+let archiveDeletePolicy = { autoSelect: false, hours: 720 }
+const archiveDeletePolicyWrites = []
+const archiveDeleteRequests = []
 
 const deletedRequests = []
 let deleteShouldSucceed = true
@@ -1678,10 +1722,16 @@ ok('humanDuration tolerates junk instead of printing NaN',
   // CARD_STYLE box, so it is matched on its own.
   ok('the settings page renders its head row',
     bundleSource.includes('key: "head", style: { display: "flex"'))
-  for (const key of ['idle', 'fav', 'del']) {
+  for (const key of ['idle', 'fav']) {
     ok(`the settings page renders its ${key} card`,
       bundleSource.includes(`key: "${key}", style: CARD_STYLE`))
   }
+  // 0.31.0 moved the batch-delete card into ArchiveDeleteCard so that it can
+  // share the pre-tick shell with the snapshot card. It is still a card on the
+  // same page — only the way it is produced changed.
+  ok('the settings page renders its del card through ArchiveDeleteCard',
+    /React\.createElement\(ArchiveDeleteCard, \{[\s\S]{0,400}?key: "del"/.test(bundleSource) ||
+    /key: "del",[\s\S]{0,400}?entries: archiveEntries/.test(bundleSource))
   // 🔴 The ungrouped card must be mounted AND must not be able to delete
   // without an explicit confirm. Both halves are asserted: a card that renders
   // but sends `confirm: true` unconditionally would be a one-click deleter.
@@ -2164,9 +2214,34 @@ function findCheckbox(tree, index = 0, filter = null) {
   return found[index] ?? null
 }
 
-/** The pre-tick switch, by its visible label rather than by position. */
+/**
+ * The pre-tick switches, by their accessible name rather than by position.
+ *
+ * 🔴 There are TWO of them now (snapshot card and archive-delete card) and they
+ * are deliberately independent — so "the first checkbox without an aria-label"
+ * would silently pick whichever card rendered first and then assert the wrong
+ * thing about the wrong policy.
+ */
 function findPolicySwitch(tree) {
-  return findCheckbox(tree, 0, /^$/)
+  return findCheckbox(tree, 0, /的会话$/)
+}
+function findArchiveSwitch(tree) {
+  return findCheckbox(tree, 0, /已归档对话/)
+}
+/**
+ * The card that carries `markerRe` somewhere in its rendered text.
+ *
+ * 🔴 Both destructive cards render 试算删除 / 确认删除, and the archive card is
+ * pushed BEFORE the snapshot card. Looking a button up by its label alone
+ * therefore returns the wrong card, which is invisible until you notice the
+ * request went to the other route. Every button below is scoped this way.
+ */
+function cardContaining(tree, markerRe) {
+  const kids = Array.isArray(tree?.children) ? tree.children : []
+  for (const kid of kids) {
+    if (kid && typeof kid === 'object' && markerRe.test(textOf(kid))) return kid
+  }
+  return null
 }
 
 resetHooks()
@@ -2219,12 +2294,12 @@ ok('measured card does NOT re-scan after rendering the result',
   String(fetchCalls.filter((c) => String(c.url).endsWith('/snapshot-usage')).length - settingsBefore))
 
 // Nothing is selected yet, so the delete path must be disabled.
-const dryBtnIdle = findButtonByText(measuredTree, /试算删除/)
+const dryBtnIdle = findButtonByText(cardContaining(measuredTree, /快照占用/), /试算删除/)
 ok('delete is disabled until something is selected', dryBtnIdle !== null && dryBtnIdle.props.disabled === true)
 ok('card says what to do when nothing is selected', /先勾选要删的会话/.test(measuredText))
 
 // Tick the first row, re-render, and the delete button must wake up.
-const box = findCheckbox(measuredTree, 0, /选择会话/)
+const box = findCheckbox(cardContaining(measuredTree, /快照占用/), 0, /选择会话/)
 ok('each ledger row carries a checkbox', box !== null && typeof box.props.onChange === 'function')
 box?.props?.onChange?.()
 hookCursor = 0
@@ -2235,7 +2310,7 @@ const pickedText = textOf(pickedTree)
 ok('picking a row enables the dry run', /已选 1 个/.test(pickedText), pickedText.slice(0, 200))
 
 // Dry run first — the host must be asked for a PLAN, never a deletion.
-const dryBtn = findButtonByText(pickedTree, /试算删除/)
+const dryBtn = findButtonByText(cardContaining(pickedTree, /快照占用/), /试算删除/)
 snapshotCleanupRequests.length = 0
 dryBtn?.props?.onClick?.()
 await settle()
@@ -2258,7 +2333,7 @@ ok('confirmation says the recycle bin is used', /回收站/.test(confirmText))
 ok('confirmation states the real blast radius', /对话和磁盘文件都还在/.test(confirmText))
 
 // Only the explicit confirm may send dryRun:false.
-const confirmBtn = findButtonByText(confirmTree, /确认删除/)
+const confirmBtn = findButtonByText(cardContaining(confirmTree, /快照占用/), /确认删除/)
 snapshotCleanupRequests.length = 0
 confirmBtn?.props?.onClick?.()
 await settle()
@@ -2267,7 +2342,7 @@ ok('confirm sends dryRun:false and confirm:true',
   snapshotCleanupRequests[0]?.dryRun === false &&
   snapshotCleanupRequests[0]?.confirm === true,
   JSON.stringify(snapshotCleanupRequests[0]))
-ok('cancel button is offered next to confirm', findButtonByText(confirmTree, /取消/) !== null)
+ok('cancel button is offered next to confirm', findButtonByText(cardContaining(confirmTree, /快照占用/), /取消/) !== null)
 
 // ---------------------------------------------------------------------------
 // 0.30.0 — the age column, the pre-tick switch, and the favourites carve-out
@@ -2360,6 +2435,175 @@ ok('a re-measure with the switch on pre-ticks the aged row again',
 // The card must never fetch on its own again — no polling, no interval.
 const totalScans = fetchCalls.filter((c) => String(c.url).endsWith('/snapshot-usage')).length - settingsBefore
 ok('the card never scans without a button press', totalScans <= 4, String(totalScans))
+
+// ---------------------------------------------------------------------------
+// Batch delete of unfavourited archived chats ("批量删除归档中「未收藏」的对话")
+//
+// Same shell as the snapshot card, DIFFERENT policy. The two thresholds are not
+// shared on purpose: deleting a conversation throws the conversation away, while
+// deleting its snapshot ledger only loses one undo step. One number governing
+// both would let a cautious setting for one silently authorise the other.
+// ---------------------------------------------------------------------------
+
+console.log('\n=== archive delete card ===\n')
+
+{
+
+resetHooks()
+archiveDeletePolicy = { autoSelect: false, hours: 720 }
+archiveDeletePolicyWrites.length = 0
+archiveDeleteRequests.length = 0
+
+hookCursor = 0
+effectQueue.length = 0
+expand(sections[0].component({}), 0)
+for (const fn of effectQueue) { try { fn() } catch (e) {} }
+await settle()
+
+// Second pass: /archived has landed by now, so the rows exist.
+hookCursor = 0
+effectQueue.length = 0
+const delTree = expand(sections[0].component({}), 0)
+for (const fn of effectQueue) { try { fn() } catch (e) {} }
+const delText = textOf(delTree)
+
+ok('the archive delete card is on the settings page',
+  /批量删除归档中「未收藏」的对话/.test(delText), delText.slice(0, 200))
+
+// 🔴 The archive is listed inline, not exported. A list you must export before
+// you can read it is a list nobody reads.
+ok('the archive delete card lists the archive inline',
+  /归档共 3 条：其中已收藏 1 条（保留），未收藏 2 条（可删除）/.test(delText),
+  delText.slice(0, 320))
+ok('the archive delete card reports where the archive set came from',
+  /归档来源：官方工作区记录（3 条）/.test(delText), delText.slice(0, 320))
+// A healthy but previously-unrecognised source must NOT be dressed up as an
+// outage: 'workspace' used to render as '不可用：workspace:3'.
+ok('a healthy source is never reported as unavailable',
+  !/不可用/.test(delText), delText.slice(0, 320))
+
+function delRowBoxes(tree) {
+  const found = []
+  function walk(node) {
+    if (node === null || node === undefined) return
+    if (Array.isArray(node)) { node.forEach(walk); return }
+    if (typeof node !== 'object') return
+    if (node.type === 'input' && node.props?.type === 'checkbox' &&
+        /^删除对话 /.test(String(node.props?.['aria-label'] ?? ''))) found.push(node)
+    walk(node.children ?? [])
+  }
+  walk(tree)
+  return found
+}
+const delBoxes = delRowBoxes(cardContaining(delTree, /批量删除归档中/))
+ok('a starred conversation is not offered for deletion',
+  delBoxes.length === 2 &&
+  !delBoxes.some((b) => String(b.props['aria-label']).includes('A favourited chat')),
+  JSON.stringify(delBoxes.map((b) => b.props['aria-label'])))
+// The ages come through, and the one the cache knows nothing about says so
+// instead of pretending to be brand new.
+ok('an archived row shows its age', /50 天/.test(delText), delText.slice(0, 400))
+ok('an untitled archived conversation is labelled a new session',
+  /（新会话）/.test(delText), delText.slice(0, 400))
+
+// -- the shell really is shared -------------------------------------------
+ok('the archive card carries the same pre-tick switch',
+  /统计时自动勾选「超时」的已归档对话/.test(delText), delText.slice(0, 400))
+ok('the archive card states the switch is off by default',
+  /默认关闭/.test(delText), delText.slice(0, 400))
+ok('the archive card has its own threshold input',
+  delText.includes('超时阈值') && delText.includes('小时'), delText.slice(0, 400))
+
+// -- dry run -> confirm ---------------------------------------------------
+delBoxes[0]?.props?.onChange?.()
+await settle()
+hookCursor = 0
+effectQueue.length = 0
+const pickedTree = expand(sections[0].component({}), 0)
+for (const fn of effectQueue) { try { fn() } catch (e) {} }
+const pickedText = textOf(pickedTree)
+ok('picking an archived row enables the dry run',
+  /已选 1 个/.test(pickedText), pickedText.slice(0, 400))
+
+const dryBtn = findButtonByText(cardContaining(pickedTree, /批量删除归档中/), /试算删除/)
+ok('the archive card offers a dry run',
+  dryBtn !== null && typeof dryBtn.props.onClick === 'function')
+dryBtn?.props?.onClick?.()
+await settle()
+ok('the dry run hits the archive-delete route',
+  archiveDeleteRequests.length === 1, String(archiveDeleteRequests.length))
+ok('the dry run is a plan, not a deletion',
+  archiveDeleteRequests[0]?.dryRun === true && archiveDeleteRequests[0]?.confirm === false,
+  JSON.stringify(archiveDeleteRequests[0]))
+ok('the dry run carries exactly the ticked session id',
+  JSON.stringify(archiveDeleteRequests[0]?.sessionIds) === JSON.stringify(['session-plain-1']),
+  JSON.stringify(archiveDeleteRequests[0]?.sessionIds))
+
+hookCursor = 0
+effectQueue.length = 0
+const dryTree = expand(sections[0].component({}), 0)
+for (const fn of effectQueue) { try { fn() } catch (e) {} }
+const dryText = textOf(dryTree)
+ok('the dry run result is labelled as no-change',
+  /【试算结果，未做任何修改】/.test(dryText), dryText.slice(0, 500))
+ok('the confirmation prompt names the real loss',
+  /永久删除这 1 条已归档、未收藏的对话/.test(dryText) &&
+  /不可撤销/.test(dryText) &&
+  /已收藏的 1 条会被保留/.test(dryText),
+  dryText.slice(0, 500))
+
+const confirmBtn = findButtonByText(cardContaining(dryTree, /批量删除归档中/), /确认删除/)
+ok('a confirm button appears after the dry run',
+  confirmBtn !== null && typeof confirmBtn.props.onClick === 'function')
+confirmBtn?.props?.onClick?.()
+await settle()
+ok('confirming the archive deletion is a real deletion',
+  archiveDeleteRequests.length === 2 &&
+  archiveDeleteRequests[1]?.dryRun === false &&
+  archiveDeleteRequests[1]?.confirm === true,
+  JSON.stringify(archiveDeleteRequests[1]))
+
+// -- the separate policy really drives this card --------------------------
+hookCursor = 0
+effectQueue.length = 0
+const beforeSwitchTree = expand(sections[0].component({}), 0)
+for (const fn of effectQueue) { try { fn() } catch (e) {} }
+const delSwitch = findArchiveSwitch(beforeSwitchTree)
+ok('the archive card exposes its own pre-tick switch',
+  delSwitch !== null && delSwitch.props?.checked === false,
+  JSON.stringify(delSwitch?.props?.['aria-label']))
+delSwitch?.props?.onChange?.()
+await settle()
+hookCursor = 0
+effectQueue.length = 0
+const askTree = expand(sections[0].component({}), 0)
+for (const fn of effectQueue) { try { fn() } catch (e) {} }
+ok('turning the archive switch on asks for a risk acknowledgement too',
+  /我知道风险，打开/.test(textOf(askTree)), textOf(askTree).slice(0, 500))
+ok('the archive ask writes nothing yet', archiveDeletePolicyWrites.length === 0,
+  JSON.stringify(archiveDeletePolicyWrites))
+
+const delAck = findButtonByText(askTree, /我知道风险，打开/)
+delAck?.props?.onClick?.()
+await settle()
+ok('acknowledging persists the archive policy on its own route',
+  archiveDeletePolicyWrites.length === 1 &&
+  archiveDeletePolicyWrites[0]?.autoSelect === true &&
+  !snapshotPolicyWrites.some((w) => w.autoSelect === true),
+  JSON.stringify({ archive: archiveDeletePolicyWrites, snapshot: snapshotPolicyWrites }))
+
+hookCursor = 0
+effectQueue.length = 0
+const onDelTree = expand(sections[0].component({}), 0)
+for (const fn of effectQueue) { try { fn() } catch (e) {} }
+const onDelText = textOf(onDelTree)
+ok('the archive switch reads as enabled afterwards', /已开启/.test(onDelText),
+  onDelText.slice(0, 400))
+// 50 days > the 720h (30 day) threshold → ticked. The unknown-age row must NOT
+// be ticked: "unknown" is not "very old".
+ok('the aged archived row is pre-ticked', /已选 1 个/.test(onDelText),
+  onDelText.slice(0, 400))
+}
 
 // ---------------------------------------------------------------------------
 // Summary

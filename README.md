@@ -76,7 +76,7 @@ so it composes with the shipped UI instead of patching it.
 | Feature | UI location |
 |---|---|
 | Favourite / copy / delete one conversation | Sidebar row 「…」 menu (and a hover ☆ on the row) |
-| Idle batch archive, export list, favourites list, batch delete, **ungrouped health check** | **Settings → 归档收藏** |
+| Idle batch archive, export list, favourites list, **batch delete of archived conversations (inlined list, per-row ticks, dry run → confirm, its own pre-tick switch)**, **ungrouped health check** | **Settings → 归档收藏** |
 | Favourites filter | **视图选项 → 筛选会话** |
 | Edit-resend / undo turn / delete one message | The ↺ ✏️ 🗑 buttons under each **user** message in the transcript |
 | Undo and edit confirmation | A modal (`shell.overlay`) — the only place the plugin draws outside the sidebar |
@@ -122,7 +122,9 @@ lib/client.js   client half — official slot registrations + two DOM rules
 | `POST /export-list` | write the tab-separated list |
 | `POST /reveal` | open the file manager on a path |
 | `POST /session-info` | one session's title / workspace / transcript path |
-| `POST /delete` | guarded permanent delete (batch) |
+| `POST /delete` | guarded permanent delete (batch; the session-menu delete goes through it) |
+| `GET\|POST /archive-delete-policy` | the idle pre-tick switch and threshold for the archive-delete list (**its own policy file**) |
+| `POST /archive-delete` | batch delete of archived-but-unfavourited conversations; the host rebuilds the candidate set, **dry run unless `confirm: true`**, favourites refused |
 | `POST /session-turn-info` | one turn's user text, its file-change list, and the fork boundary |
 | `POST /session-files-restore` | roll back the files changed after a given sequence number |
 | `POST /session-replace` | retire the original conversation after a fork took its place |
@@ -388,6 +390,27 @@ auto-delete.
   rows arrive already ticked after a scan. Every delete still costs two clicks,
   and turning the switch on first shows a risk box that names what will be
   ticked and what deleting a ledger costs.
+- **Snapshot deletion and conversation deletion have SEPARATE switches and
+  SEPARATE thresholds.** The blast radii differ: losing a ledger costs "undo an
+  old turn", losing a conversation costs the conversation. One shared policy
+  would let a cautious snapshot threshold silently authorise deleting chats, so
+  the two policies live in different files.
+
+### Limits of the archive-delete card
+
+- **The list comes from the live archive registry, not a cache.** `/archived`
+  is re-read every time, so a conversation archived or unarchived a second ago
+  is already reflected.
+- **The host rebuilds the candidate set; the client only says what it wants.**
+  `/archive-delete` recomputes "archived ∧ visible in the sidebar ∧ not blank ∧
+  not favourited", intersects it with the submitted ids, reports `missing` for
+  anything that no longer qualifies, and refuses `refusedFavorites`.
+- **Favourited archived conversations never appear in the list.** Same double
+  protection as the snapshot card: lifted out for display, refused again
+  host-side.
+- **The delete is permanent and does NOT use the recycle bin.** It removes the
+  conversation together with its transcript — unlike deleting a ledger, which
+  leaves the conversation and the files alone. The confirmation says so.
 
 ### Limits of the Ungrouped health check
 
