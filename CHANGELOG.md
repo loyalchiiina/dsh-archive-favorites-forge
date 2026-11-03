@@ -4,6 +4,30 @@ All notable changes to this project are documented here.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 this project uses [Semantic Versioning](https://semver.org/).
 
+## 0.39.1 — 2026-11-03
+
+### 撤销之后，界面终于告诉你发生了什么
+
+0.39.0 的撤销是「看不见」的，而且是**故意**看不见：聊天流只渲染 append-origin 事件，被遮蔽的那几行照旧留在窗口里；请求本身 100 ms 级返回，没有转圈、没有提示。用户点完撤销（日志里明明 `changed=true shadowed=2`，紧接着再点一次还正确返回 `already-rewound`）却以为「点了没反应」。
+
+补两件事，都是纯前端，不动任何数据：
+
+- **成功后立刻弹提示**，带条数：「已撤回 N 条消息（原内容保留，模型已不可见）」。`toast()` 加了可选的停留时长参数（默认仍是 2400 ms），撤销/删除这类「必须看见」的提示停 4200 ms。
+- **被遮蔽的旧行标灰**：整行 `opacity: .4`（浅色主题 .48），人类提问行再加删除线。样式类 `dsh-aff-sd-shadowed` / `dsh-aff-sd-shadowed-msg`，`opacity` 带 `!important`，因为应用会给部分行写行内样式。
+
+两个实现上的取舍值得写下来：
+
+- **按 `data-chat-flow-key` 记账，不按轮号。** 撤销后用户往往立刻重发，新消息的轮号会从 marker 的 turn 继续往上数，完全可能等于或小于刚被撤销那几轮的轮号 —— 按轮号打标会把**刚发出去的新消息**也标灰。flow-key 是官方给每个渲染节点发的稳定键：React 重渲染会换 DOM 节点，但 key 不变，所以既能跨重渲染保住标记，又天然只命中「撤销那一刻已经在窗口里的那几行」。
+- **先抓 key，成功才落账。** 请求发出前先扫一遍当前 DOM 里 `data-chat-turn >= info.turn` 的行取 key（那时 DOM 一定完整），`rewindSession` 返回 `changed === true` 之后才提交；失败什么也不标。`scan()` 每次给消息行补挂按钮之后顺手 `applyShadowMarks()` 一遍，因为 React 重渲染会把 class 一起冲掉。
+- **编辑重发同样标灰**：`submitEdit` 走的是同一条 rewind，被替换掉的旧行一样降透明度；新发出的那条是新的 flow-key，不会被误标。
+- **定位不到当前会话就什么都不动**（`if (!activeId) return`）—— 宁可少标，也不要把别的会话的标记抹掉。还有一条快路径：从没标过、窗口里也没有残留标记时直接返回，不给每次 DOM 变动都加全量扫描。
+
+### 探针
+
+`test/probe-rewind.mjs` 70 → **90 条**，新增第 10 节「Feedback」，20 条断言钉住：toast 签名与默认值、撤销/删除文案必须含条数与「原内容保留 / 模型已不可见」、停留时长 4200、旧文案不得残留、两条 CSS 规则与 `!important`、按 flow-key 而非轮号、per-session 记账、快路径、**提交必须在 `changed` 守卫之后**、**抓取必须在请求之前**、编辑路径同样标灰、`scan()` 有重绘、定位不到会话时不标。
+
+八套探针 **793 pass / 0 fail**（probe-client 365 / probe-rewind 90 / probe-snapshot-usage 89 / probe-ungrouped-guard 86 / probe-digest 58 / probe-filehistory 43 / probe-sidebar-watch 43 / probe-delete-ledger 19）。
+
 ## 0.39.0 — 2026-11-03
 
 ### 撤销和编辑重发不再 fork，改成在同一个会话里遮蔽尾部

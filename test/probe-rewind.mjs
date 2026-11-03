@@ -407,6 +407,93 @@ function mirrorDeriveMessage(event) {
 }
 
 // ---------------------------------------------------------------------------
+// 10. Feedback: the user must be able to SEE that a rewind happened
+// ---------------------------------------------------------------------------
+//
+// 0.39.0 shipped a rewind that is invisible on purpose: the old rows stay in
+// the window (the chat stream renders append-origin events only) and the
+// request returns in ~100 ms with no spinner. The user read that as "clicking
+// undo does nothing". 0.39.1 adds two pieces of feedback and this section
+// pins both of them down.
+
+{
+  const clientSource = readFileSync(clientPath, 'utf8')
+  const clientCode = clientSource
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n').map((line) => line.replace(/\/\/.*$/, '')).join('\n')
+
+  // --- the toast -----------------------------------------------------------
+  ok('toast takes an optional dwell time so a rewind message can stay up',
+    /function toast\(message, durationMs\)/.test(clientCode), 'toast signature')
+  ok('toast still defaults to 2400 ms for ordinary messages',
+    /typeof durationMs === "number" && durationMs > 0 \? durationMs : 2400/.test(clientCode), 'toast default')
+
+  const undoSeg = clientCode.slice(
+    clientCode.indexOf('const doUndoTurn = async'),
+    clientCode.indexOf('const doDeleteMessage = async')
+  )
+  const deleteSeg = clientCode.slice(
+    clientCode.indexOf('const doDeleteMessage = async'),
+    clientCode.indexOf('let busy = false')
+  )
+  ok('undo reports how many messages it hid', /rewound\.shadowed/.test(undoSeg), 'count in toast')
+  ok('undo says the content is kept but the model can no longer see it',
+    /模型已不可见/.test(undoSeg) && /原内容保留/.test(undoSeg), 'undo wording')
+  ok('delete reports how many messages it hid', /rewound\.shadowed/.test(deleteSeg), 'count in toast')
+  ok('delete says the content is kept but the model can no longer see it',
+    /模型已不可见/.test(deleteSeg) && /原内容保留/.test(deleteSeg), 'delete wording')
+  ok('the rewind toast dwells longer than the default',
+    /, 4200\)/.test(undoSeg) && /, 4200\)/.test(deleteSeg), 'dwell time')
+  ok('the old wording that hid the count is gone',
+    !/已撤销第 \$\{info\.turn\} 轮及其后的对话/.test(clientCode), 'stale wording')
+
+  // --- the grey-out --------------------------------------------------------
+  ok('the stylesheet defines the shadowed row style',
+    /\.dsh-aff-sd-shadowed \{[^}]*opacity/.test(clientCode), 'css opacity')
+  ok('the stylesheet strikes through shadowed human messages',
+    /\.dsh-aff-sd-shadowed-msg \{[^}]*text-decoration: line-through/.test(clientCode), 'css strike')
+  ok('the shadow style wins over the host row styling',
+    /\.dsh-aff-sd-shadowed \{[^}]*opacity: \.[0-9]+ !important/.test(clientCode), 'css specificity')
+
+  // Rows are identified by the host's own stable flow key, never by turn
+  // number: after a rewind the user often resends immediately, and the new
+  // message can legitimately reuse a turn number the user just discarded.
+  ok('shadowed rows are keyed by the host flow key, not by turn number',
+    /getAttribute\('data-chat-flow-key'\)/.test(clientCode) && !/data-chat-turn=.\$\{.*\}\].*shadowed/i.test(clientCode),
+    'flow key')
+  ok('the capture reads the turn it was asked for and nothing earlier',
+    /Number\(el\.getAttribute\('data-chat-turn'\)\)/.test(clientCode) && /turn < fromTurn/.test(clientCode), 'turn filter')
+  ok('the shadow state is remembered per session',
+    /shadowedKeys = new Map\(\)/.test(clientCode), 'per-session map')
+  ok('marking is skipped entirely when nothing was ever shadowed',
+    /shadowedKeys\.size === 0 && document\.querySelector\('\.dsh-aff-sd-shadowed'\) === null/.test(clientCode), 'fast path')
+  ok('a failed rewind does not paint anything grey',
+    (() => {
+      const commitAt = undoSeg.indexOf('commitShadowedKeys(sessionId, shadowCandidate)')
+      const guardAt = undoSeg.indexOf('if (!rewound.changed) throw')
+      return commitAt > 0 && guardAt > 0 && commitAt > guardAt
+    })(), 'commit order')
+  ok('the keys are captured before the request, while the DOM is still whole',
+    (() => {
+      const capAt = undoSeg.indexOf('captureShadowedKeys(sessionId, info.turn)')
+      const callAt = undoSeg.indexOf('await rewindSession(sessionId, info.beforeSeq)')
+      return capAt > 0 && callAt > 0 && capAt < callAt
+    })(), 'capture order')
+  ok('editing and resending also greys out the rows it replaced',
+    /captureShadowedKeys\(sessionId, info\.turn\)/.test(clientCode) &&
+      clientCode.slice(clientCode.indexOf('const submitEdit = async'), clientCode.indexOf('// 撤销此轮：先取 turn 元信息')).includes('commitShadowedKeys'),
+    'edit path')
+  ok('the button injector repaints the marks after React wipes the classes',
+    (() => {
+      const scanAt = clientCode.indexOf('const scan = () =>')
+      const applyAt = clientCode.lastIndexOf('applyShadowMarks()')
+      return scanAt > 0 && applyAt > scanAt
+    })(), 'scan repaint')
+  ok('marking never touches a session it cannot identify',
+    /if \(!activeId\) return/.test(clientCode), 'unknown session guard')
+}
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 

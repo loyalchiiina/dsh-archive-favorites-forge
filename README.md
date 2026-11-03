@@ -413,6 +413,12 @@ auto-delete.
   conversation: no fork, no delete, no new session id. The shadowed turns stop
   reaching the model, but their events stay in the transcript file, so the
   conversation is never lost — and the row in the sidebar is the same row.
+  Since 0.39.1 the window says so too: the rows that were just shadowed are
+  greyed out (struck through, for the messages you typed), and a toast reports
+  how many messages were hidden. The marks are keyed by the host's own
+  `data-chat-flow-key`, never by turn number — after a rewind you often resend
+  immediately, and the new message can legitimately reuse a turn number you
+  just discarded.
 - **Blank conversations are not affected** by any of this: they have no turns
   and no tool calls.
 
@@ -681,7 +687,7 @@ test/probe-sidebar-watch.mjs probe of the domain/changed watcher that purges sna
 test/probe-delete-ledger.mjs proves that deleting a conversation always takes its snapshot ledger with it
 ```
 
-Run all eight (773 assertions):
+Run all eight (793 assertions):
 
 ```sh
 node test/probe-client.mjs
