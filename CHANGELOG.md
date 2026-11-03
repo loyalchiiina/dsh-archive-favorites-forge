@@ -4,6 +4,47 @@ All notable changes to this project are documented here.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 this project uses [Semantic Versioning](https://semver.org/).
 
+## 0.39.0 — 2026-11-03
+
+### 撤销和编辑重发不再 fork，改成在同一个会话里遮蔽尾部
+
+以前点「撤销」或「编辑重发」，插件的做法是：调 `sessions.fork({ sessionId, atSeq })` 开一个截断到那一轮之前的**新会话**，把附件重新上传一遍、把你要重发的那句话塞进新会话，最后调 `POST /session-replace` 把**原会话整个删掉**。
+
+这套流程能work，但代价是每次撤销都在制造一条全新的对话：新 sessionId、新工具清单顺序、新 payload 前缀 —— 模型那边的缓存**全部作废**。本机实测（`session-4f772933`，14 次请求）：前缀 100% 相同的请求命中率稳定 **99.4~99.6%**、首包 5.7~7.0 秒；而 fork 出来的子会话第一次请求命中只有 **2.5%**、首包 **14.5 秒**。26 万 token 的上下文，撤销一次就要重新付一遍。
+
+0.39.0 换成官方自己在压缩上下文时用的那套机制：`Session.append(..., { surfaceOp: { op: 'replace', startSeq, endSeq }, sourceEventSeqs })`。它往会话日志**追加**一条空内容的 `system/message`，用 `sourceEventSeqs` 声明「这条新事件取代了从 startSeq 到 endSeq 的全部 surface 节点」。日志一行没删、sessionId 不变、原会话一个字都没动，只是折叠 surface 时那些节点不再产生 wire message。
+
+具体改动：
+
+- 新增宿主路由 `POST /session-rewind`，body `{ sessionId, beforeSeq }`。内部函数 `rewindSession()` 会：取活着的 `Session`（必须驻留，否则 409 `not-resident`）→ 会话正在跑就 409 `running` → 从 `session.surface.nodes` 里取所有 `seq > beforeSeq` 的节点作 `shadowed` → 追加 marker 事件。
+- `startSeq` / `endSeq` **必须**取自 `session.surface.nodes` 而不是日志下标：trace 类事件（`turn/start`、`step/start`、`tool/call`）在日志里但没有 surface 节点，按下标算会命中 `surface replace: start seq X not found in surface`。
+- node 0（system prompt）有保护：`assertSystemHeadRewrite` 只允许单节点的 `system/message` 覆盖它，所以 `firstIndex` 落在 0 时往后挪一位；真挪不动就返回 `only-the-system-prompt-remains` 而不是硬删。
+- 客户端 `doUndoTurn` / `doDeleteMessage` / `submitEdit` 全部改走 rewind；`openTruncatedChild`（fork）、`/session-replace`、以及「重发后删原会话」三步全部删除。重发现在直接对**同一个** sessionId 调 `session.prompt(content, 'queue')`。
+- 撤销后要重发的那句话，改走官方输入框通道 `conversation.input.shell(sessionId).setDraft(text)` 预填（`ctx.get('conversation')`），失败才退回 `localStorage` 的草稿键。
+
+### 重复点撤销不再叠空节点
+
+第一版有个真 bug：撤销一次后 surface 尾部就是刚追加的那个 marker，而 marker 的 seq **大于** `beforeSeq`，所以再点一次撤销会把 marker 也一起遮蔽、再追加一个新的空节点 —— 点几次就多几个。现在 `isRewindMarker()` 认得出自己的 marker（`system/message` + 空 content + `message.id` 以 `rewind-` 开头），如果尾部**全部**是 marker 就直接返回 `already-rewound`，不写任何东西。
+
+### 删掉 `/session-replace`：最后一个能绕过收藏守卫的公开路由
+
+`handleDelete` 原本有一个 `options.replace` 参数，只给插件自己的编辑/撤销流程用 —— 它跳过「绝不删除收藏」这条守卫，因为要被删的原会话刚被自己的 fork 顶替。rewind 上线后没有任何调用方了，剩下的就是一个**公开路由 + 关掉守卫 + 永久删除收藏对话**的组合，任何能往插件 webServer 发 POST 的东西都能用。已整段删除，`handleDelete` 签名从 4 参变 3 参，守卫无条件生效，原位置留了一块 tombstone 注释说明为什么不许再发明它。
+
+### 撤销链路只读一遍日志（A 档）
+
+一次撤销原本要把同一个会话的 `session.v4.jsonl.zstd` 解压 + 解码 + parse **2~3 遍**（算改动文件、回滚文件、取 turn 信息各一遍）。本机最大会话 15.13 MB → 解压 54.5 MB / 17,344 事件，单遍 **531 ms**（最大会话 834 ms）。现在 `readSessionEventsCached()` 与 `readManifestEntries()` 共用一个 **request 级** `Map`（绝不模块级，避免跨请求脏读），`collectLogChanges` / `reverseApplyFromLog` / `restoreFilesBefore` / `affectedFiles` / `turnInfo` 全部透传；`restoreFilesBefore` 重写 manifest 后会 `cache.delete()` 防脏读。
+
+### 探针
+
+新增 `test/probe-rewind.mjs`（70 条）与 `test/probe-client.mjs` 的客户端断言。官方 planner 规则（`replacementRange` / `assertSourceEventReferences` / `assertSystemHeadRewrite` / `deriveEventMessage`）在探针里做了**逐条标注出处行号的窄镜像**，每条镜像都配一个反向对照（拒 start 不是 surface 节点 / 拒倒序 / 拒漏项 / 拒自引用 / 拒重复 / 拒非 system 覆盖 node0），保证「绿」不是空断言。
+
+`test/probe-filehistory.mjs` 的 §F 原本专门证明「`replace` 是唯一能跳过收藏守卫的例外」，现在反过来断言：守卫没有例外、`handleDelete.length === 3`、多传一个 `{ replace: true }` 也删不掉、目录还在盘上、`/session-replace` 已无路由、`/session-rewind` 已就位。
+
+八套探针：**773 pass / 0 fail**（probe-client 365 / probe-rewind 70 / snapshot-usage 89 / ungrouped-guard 86 / digest 58 / filehistory 43 / sidebar-watch 43 / delete-ledger 19）。
+
+### 还剩下的成本，说清楚
+
+rewind 不是零成本。replace 会把 `contentGeneration` 加一，下一次请求 `startsSeries` 就是 true，system prompt 节点会被重写，缓存前缀会**部分**断裂。但和 fork 比是两个量级：fork 是整段 26 万 token 全冷（首包 14.5 秒），rewind 只损失被改写的那一小段。顺带一个反直觉的实测结论：官方 `/compact` 用的也是同一套 replace，压缩后首发命中只有 **0~14.8%**（扫了 6 个会话的 13 次压缩）——「压缩上下文」和「高缓存命中」本质互斥。
 ## 0.38.1 — 2026-11-02
 
 ### 效果图全部换成 0.38.0 实机截图

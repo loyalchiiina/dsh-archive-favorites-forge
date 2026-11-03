@@ -149,9 +149,9 @@ lib/client.js   client half — official slot registrations + two DOM rules
 | `POST /delete` | guarded permanent delete (batch; the session-menu delete goes through it) |
 | `GET\|POST /archive-delete-policy` | the idle pre-tick switch and threshold for the archive-delete list (**its own policy file**) |
 | `POST /archive-delete` | batch delete of archived-but-unfavourited conversations; the host rebuilds the candidate set, **dry run unless `confirm: true`**, favourites refused |
-| `POST /session-turn-info` | one turn's user text, its file-change list, and the fork boundary |
+| `POST /session-turn-info` | one turn's user text, its file-change list, and the rewind boundary |
 | `POST /session-files-restore` | roll back the files changed after a given sequence number |
-| `POST /session-replace` | retire the original conversation after a fork took its place |
+| `POST /session-rewind` | shadow the tail of a conversation after a given sequence number, **in place** — same session id, nothing deleted (0.39.0) |
 | `POST /session-digest` | read-only: distil a long conversation into a requirement-timeline + task-progress brief for a fresh window |
 | `POST /ungrouped-diagnose` | read-only health check: which conversations would land in "Ungrouped", why, and what to do |
 | `POST /ungrouped-cleanup` | one-click cleanup; **dry run unless `confirm: true`**, and it re-diagnoses before acting |
@@ -211,39 +211,69 @@ successful delete the host emits `api-session/removed` — the harness's own
 row-removal event — so the sidebar drops the row immediately instead of showing
 it until the next reload.
 
-### Why edit and undo are "fork, then retire the original"
+### Why edit and undo shadow the tail instead of forking
 
-There is no in-place "truncate this conversation" RPC either. The only official
-way to keep a prefix of a conversation is `sessions.fork({ sessionId, atSeq })`,
-which produces a **new** child conversation holding everything before `atSeq`.
+Until 0.38.x this was a three-step dance: `sessions.fork({ sessionId, atSeq })`
+opened a **new** child conversation holding everything before `atSeq`, the
+attachments were re-uploaded, the message was resent into the child, and then
+`POST /session-replace` deleted the original because its own fork had superseded
+it. It worked, and it was the wrong shape.
 
-So both buttons do the same three-step dance:
+Every undo manufactured a brand-new conversation: new session id, and — because
+the tool list is serialised at the very front of the request payload — a new
+prefix. Measured on this machine over 14 consecutive requests: when the payload
+prefix is byte-identical the upstream cache hit rate holds at **99.4-99.6%** and
+the first token arrives in **5.7-7.0 s**; the first request of a forked child hit
+**2.5%** and took **14.5 s**. A single tool appearing or disappearing in the list
+was enough to drop a shared prefix from 100% to 38.4%. Undo was re-paying for the
+whole context every time.
 
-1. **Fork** the conversation at the boundary (for the first turn there is no
-   prefix to keep, so `sessions.create` opens a fresh conversation in the same
-   workspace instead);
-2. **Optionally roll the files back** — `POST /session-files-restore` restores
-   every file the assistant touched after that boundary;
-3. **Retire the original** via `POST /session-replace`, because the original is
-   now superseded by its own fork and leaving it around would double every row
-   in the sidebar.
+0.39.0 uses the mechanism the harness itself uses when it compacts:
 
-Step 3 is the one place where a **favourite** conversation may be deleted, and it
-is the reason `handleDelete` grew an explicit `replace` flag rather than the
-client simply calling `/delete`: a favourite means "keep this conversation", and
-the conversation being retired here is *the one the fork replaced*. Only the
-favourite guard is skipped. Every other guard — sessions-root containment, not
-the root itself, non-symlink, is-a-directory, and the EBUSY/EPERM retries — stays
-on, because a fork produces an ordinary session directory and none of those
-conditions have become safe. The flag is threaded as an explicit parameter on a
-**separate route**, so a `/delete` request body can never switch the guard off.
+```js
+session.append("system/message", marker, {
+  surfaceOp: { op: "replace", startSeq, endSeq },
+  sourceEventSeqs: shadowed,
+})
+```
 
-`beforeSeq` (the fork boundary) is the sequence number of the event **immediately
-before** the turn's `turn/start`, not the `turn/start` itself. Forking inside the
-gap between `turn/start` and the first user message would leave an unclosed
-`turn/start` in the child, and the fork synthesises a completed-turn line to
-close it — a phantom empty turn.
+The event is **appended**; nothing is removed from the log. `sourceEventSeqs`
+declares that this new event supersedes every surface node from `startSeq` to
+`endSeq`, so folding the surface no longer derives wire messages for them. The
+session id is unchanged, the transcript file is unchanged, and the original
+conversation is still there in full.
 
+Three details that are easy to get wrong:
+
+- **`startSeq` / `endSeq` come from `session.surface.nodes`, not from log
+  indices.** Trace events (`turn/start`, `step/start`, `tool/call`) live in the
+  log but own no surface node; computing the boundary by index lands on a seq the
+  surface does not know and the append is rejected with
+  `surface replace: start seq X not found in surface`.
+- **Node 0 is the system prompt** and may only be replaced by a single
+  `system/message`; the host therefore never starts the shadow at index 0, and
+  reports `only-the-system-prompt-remains` instead of guessing.
+- **Undoing twice must not stack.** The marker's own seq is greater than
+  `beforeSeq`, so a second press would shadow the first marker and append another.
+  The host recognises its own markers (empty `content`, `message.id` starting
+  with `rewind-`) and answers `already-rewound` without writing anything.
+
+`beforeSeq` is the sequence number of the event **immediately before** the
+turn's `turn/start`, not the `turn/start` itself: the boundary must sit outside
+the turn, or the rewind would leave an unclosed `turn/start` behind.
+
+Rewind is not free. A replacement bumps the surface content generation, so the
+next request starts a new request series and the system prompt is re-sent; the
+cache prefix breaks **partially**. That is a different order of magnitude from
+forking, which broke it completely. (The harness's own `/compact` uses the same
+primitive and lands at 0-14.8% on the first request afterwards — compressing and
+caching are, in the end, opposites.)
+
+This is also why `POST /session-replace` and the `replace` flag on
+`handleDelete` are gone: rewind deletes nothing, so nothing needed a delete that
+skipped the favourite guard. That route was a public endpoint that permanently
+removed a **favourited** conversation with the guard switched off — dead code,
+but the dangerous kind.
 ### Why the file snapshots are content-addressed
 
 Before each `write` / `edit` / `str_replace_editor` call the host copies the
@@ -376,11 +406,13 @@ auto-delete.
   "undo" means here, but it is worth knowing before ticking the checkbox.
 - **The edit box is prefilled with the message text only.** Attachments that
   were on the original message are **not** carried over — re-attach them if the
-  resend needs them. This is deliberate: attachment handles are session-scoped
-  and copying one into a new conversation would produce a dangling reference.
-- **Undo deletes the original conversation.** The rewind is implemented as
-  fork-and-retire, so the pre-undo conversation does not survive as a hidden
-  branch. Anything in it that you wanted to keep should be copied out first.
+  resend needs them. The text is written through the harness's own input channel
+  (`conversation.input.shell(sessionId).setDraft`), falling back to the stored
+  draft key when that channel is unavailable.
+- **Undo deletes nothing.** Since 0.39.0 the rewind shadows the tail of the same
+  conversation: no fork, no delete, no new session id. The shadowed turns stop
+  reaching the model, but their events stay in the transcript file, so the
+  conversation is never lost — and the row in the sidebar is the same row.
 - **Blank conversations are not affected** by any of this: they have no turns
   and no tool calls.
 
@@ -641,17 +673,25 @@ lib/ungrouped-guard.js       self-contained Ungrouped diagnose/cleanup module
 lib/client.js                client half (a __ModuleLoader__ bundle)
 test/probe-client.mjs        DOM-stub probe of the client contract
 test/probe-filehistory.mjs   end-to-end probe of the snapshot/rollback bytes
+test/probe-rewind.mjs        probe of the in-place rewind: refusals, no-ops, the exact append, and a mirrored copy of the harness's surface planner rules (each with a negative control)
 test/probe-ungrouped-guard.mjs isolated probe of the Ungrouped guard + ghost cache + blank-session detection (fake home, 11 session fixtures + 6 cache fixtures + perf contract)
+test/probe-snapshot-usage.mjs  isolated probe of the snapshot usage scan (read-only, concurrency, three-layer path guards)
 test/probe-digest.mjs        isolated probe of the handover brief (fake home, 18 events + a 60-requirement conversation)
+test/probe-sidebar-watch.mjs probe of the domain/changed watcher that purges snapshots on a sidebar archive
+test/probe-delete-ledger.mjs proves that deleting a conversation always takes its snapshot ledger with it
 ```
 
-Run all four:
+Run all eight (773 assertions):
 
 ```sh
 node test/probe-client.mjs
 node test/probe-filehistory.mjs
+node test/probe-rewind.mjs
 node test/probe-ungrouped-guard.mjs
+node test/probe-snapshot-usage.mjs
 node test/probe-digest.mjs
+node test/probe-sidebar-watch.mjs
+node test/probe-delete-ledger.mjs
 ```
 
 They answer different questions and neither substitutes for the other.
@@ -662,8 +702,9 @@ throwaway fake DSH home — a multi-frame zstd session log and real files on dis
 and proves the one claim a contract test cannot: that undoing a turn actually
 puts the previous bytes back. It reproduces the real ordering (the `tool/call`
 event is published *before* the tool runs, so the snapshot must capture the
-pre-edit bytes), and it exercises the log-reverse fallback used for forked
-children, which inherit events without ever publishing `session/event`.
+pre-edit bytes), and it exercises the log-reverse fallback used for
+conversations whose events predate the plugin, which never published a
+`session/event` of their own.
 
 Both suites write only inside `.probe-*` directories in this repo and delete
 them on the way out.

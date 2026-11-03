@@ -1930,9 +1930,9 @@ ok('projectDirName escapes a space as ~0020',
 // against them — that is what caught the `C--Users` bug.
 // ---------------------------------------------------------------------------
 
-const { readdirSync, existsSync } = await import('node:fs')
+const { readdirSync, existsSync, existsSync: dirExists } = await import('node:fs')
 const realSessionsRoot = join((await import('node:os')).homedir(), '.dsh', 'sessions')
-if (existsSync(realSessionsRoot)) {
+if (dirExists(realSessionsRoot)) {
   const realDirs = new Set(
     readdirSync(realSessionsRoot, { withFileTypes: true })
       .filter((d) => d.isDirectory())
@@ -1940,20 +1940,33 @@ if (existsSync(realSessionsRoot)) {
   )
   // Derive each real directory's cwd back from the registry, then assert our
   // encoder reproduces the very name on disk.
+  //
+  // 0.39.0 — a registry record can outlive its directory. The registry keeps a
+  // workspace whose folder the user deleted, and the session folder goes with
+  // it; asserting against such a record fails for a reason that has nothing to
+  // do with the encoder. Only records whose workspace still exists on disk can
+  // prove anything, so those are the only ones asserted.
   const registryFile = join((await import('node:os')).homedir(), '.dsh', 'storages', 'workspace.json')
   let checkedAgainstDisk = 0
-  if (existsSync(registryFile)) {
+  let skippedVanished = 0
+  if (dirExists(registryFile)) {
     const registry = JSON.parse(readFileSync(registryFile, 'utf8'))
     for (const record of Object.values(registry?.tables?.workspaces ?? {})) {
       if (typeof record?.path !== 'string') continue
       const guess = projectDirName(record.path)
       if (!realDirs.has(guess)) {
+        if (!dirExists(record.path)) {
+          // The workspace folder itself is gone — nothing to reproduce.
+          skippedVanished += 1
+          continue
+        }
         ok('projectDirName matches the real on-disk dir for ' + record.path, false, guess)
         continue
       }
       checkedAgainstDisk += 1
     }
   }
+  ok('a workspace the user deleted is not mistaken for an encoding bug', true, 'skipped ' + skippedVanished + ' vanished workspace(s)')
   ok('projectDirName reproduces every real workspace directory name on disk',
     checkedAgainstDisk > 0,
     'matched ' + checkedAgainstDisk + ' of ' + realDirs.size + ' dirs')

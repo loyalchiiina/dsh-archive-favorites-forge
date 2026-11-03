@@ -1,0 +1,421 @@
+// Probe for the 0.39.0 in-session rewind (`POST /session-rewind`).
+//
+// WHY THIS EXISTS: until 0.38.x, "撤销这一轮 / 删除这条消息 / 编辑后重发" all
+// forked a child session at `beforeSeq` and then deleted the original. That
+// worked, but it threw away the session id — and with it the entire prompt
+// cache. Measured on this machine: a 260k-token prefix went from 99.6% cached
+// to 2.5% cached, and the first byte from ~5.7s to 14.5s. Every undo paid it.
+//
+// 0.39.0 instead appends ONE `system/message` carrying
+// `surfaceOp: {op:'replace', startSeq, endSeq}` — the same mechanism the
+// official `/compact` uses. The log is untouched, the session id survives, the
+// prefix stays warm. That is a load-bearing claim about someone else's
+// validator, so it is tested here rather than asserted in prose.
+//
+// TWO LAYERS:
+//   1. `rewindSession` itself, driven against a stub live Session — every
+//      refusal path and the exact `append` arguments.
+//   2. A LOCAL MIRROR of the official surface planner rules
+//      (`@deepseek-ai/dsh-session` → `lib/types/surface.js`, functions
+//      `planSurfaceEvent` :384 / `replacementRange` :301 /
+//      `assertSourceEventReferences` :221 / `assertSystemHeadRewrite` :373 /
+//      `deriveEventMessage` :218), applied to the marker we actually build.
+//      The real module cannot be imported here: this repo ships no
+//      node_modules and the package lives inside app.asar. The mirror is
+//      deliberately narrow — it only covers what a rewind marker exercises —
+//      and every rule cites the line it copies so drift is checkable.
+//
+// Run: node test/probe-rewind.mjs
+
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
+
+const here = dirname(fileURLToPath(import.meta.url))
+const hostPath = join(here, '..', 'lib', 'index.js')
+const clientPath = join(here, '..', 'lib', 'client.js')
+
+let pass = 0
+let fail = 0
+const failures = []
+
+function ok(label, condition, detail) {
+  if (condition) { pass += 1; console.log('  PASS  ' + label) }
+  else { fail += 1; failures.push(label + (detail ? ' :: ' + detail : '')); console.log('  FAIL  ' + label + (detail ? ' :: ' + detail : '')) }
+}
+
+const host = await import('../lib/index.js')
+const { rewindSession, lastTurnNumber, bareId } = host.__internals
+
+// ---------------------------------------------------------------------------
+// Stub live Session
+//
+// The real one is a class inside app.asar. `rewindSession` only ever touches
+// `surface.nodes`, `eventAt(seq)`, `log`, and `append(type, data, opts)`, so a
+// stub with exactly those members is a faithful seam: anything the host code
+// reaches for that the real Session does not have would also be missing here.
+// ---------------------------------------------------------------------------
+
+function makeSession({ nodes, log, headType = 'system/message', appendThrows = null }) {
+  const appended = []
+  // `eventAt(seq)` is `this.log[seq]` in the real Session, so the stub reads the
+  // log too. A rewind marker appended by a previous call must therefore be
+  // findable here for the idempotency check to be exercised honestly.
+  const bySeq = new Map()
+  for (const event of log) if (typeof event?.seq === 'number') bySeq.set(event.seq, event)
+  return {
+    log,
+    surface: { nodes },
+    eventAt: (seq) => bySeq.get(seq) ?? { type: seq === nodes[0] ? headType : 'user/message' },
+    append(type, data, opts) {
+      if (appendThrows) throw new Error(appendThrows)
+      appended.push({ type, data, opts })
+    },
+    appended,
+  }
+}
+
+function makeCtx({ live = null, status = null, flushed = [] } = {}) {
+  return {
+    get(name) {
+      if (name === 'sessions') {
+        return {
+          get: (id) => (live && id === live.id ? live : live),
+          flush: async (session) => { flushed.push(session) },
+        }
+      }
+      if (name === 'agents') return { get: () => ({ status }) }
+      return null
+    },
+  }
+}
+
+// A realistic tail: the system prompt at seq 0, then surface nodes for three
+// turns, with trace-only events (turn/start, step/*, tool traffic) interleaved
+// in the log — which is exactly the shape that makes seq != index.
+const LOG = [
+  { type: 'system/message', seq: 0 },
+  { type: 'turn/start', seq: 1, data: { turn: 1 } },
+  { type: 'user/message', seq: 2 },
+  { type: 'step/start', seq: 3 },
+  { type: 'tool/call', seq: 4 },
+  { type: 'assistant/message', seq: 5 },
+  { type: 'user/message', seq: 6 },
+  { type: 'turn/start', seq: 7, data: { turn: 2 } },
+  { type: 'step/start', seq: 8 },
+  { type: 'assistant/message', seq: 9 },
+]
+// Only the message-producing events are surface nodes; the trace events sit in
+// the log but never in the surface. That is the whole reason `startSeq` must be
+// looked up in `surface.nodes` rather than assumed equal to an index.
+const NODES = [0, 2, 5, 6, 9]
+
+// ---------------------------------------------------------------------------
+// 1. Refusal paths
+// ---------------------------------------------------------------------------
+
+{
+  // No live session: the persistence layer has no entry point that can write an
+  // event without a resident Session, so the client must open the chat first.
+  const result = await rewindSession('session-aaaa', 5, makeCtx({ live: null }))
+  ok('a session that is not resident is refused', result.ok === false && result.code === 'not-resident', JSON.stringify(result))
+  ok('that refusal is a 409, not a 500', result.status === 409, String(result.status))
+  ok('the refusal explains itself in the user\'s language', /先打开/.test(result.error ?? ''), result.error)
+}
+
+{
+  const live = makeSession({ nodes: NODES, log: LOG })
+  const result = await rewindSession('session-aaaa', 5, makeCtx({ live, status: 'running' }))
+  ok('a session mid-turn is refused', result.ok === false && result.code === 'running', JSON.stringify(result))
+  ok('nothing is appended when the turn is still publishing', live.appended.length === 0, String(live.appended.length))
+}
+
+{
+  // `ctx.get('agents')` throwing must not turn a rewind into a 500.
+  const live = makeSession({ nodes: NODES, log: LOG })
+  const ctx = { get: (name) => { if (name === 'agents') throw new Error('no agents seat'); return { get: () => live, flush: async () => {} } } }
+  const result = await rewindSession('session-aaaa', 5, ctx)
+  ok('an exploding agents seat is treated as "not running"', result.ok === true && result.changed === true, JSON.stringify(result))
+}
+
+// ---------------------------------------------------------------------------
+// 2. Nothing-to-do paths (idempotent, never an error)
+// ---------------------------------------------------------------------------
+
+{
+  const live = makeSession({ nodes: [], log: [] })
+  const result = await rewindSession('session-aaaa', 5, makeCtx({ live }))
+  ok('an empty surface is a no-op', result.ok === true && result.changed === false && result.reason === 'empty-surface', JSON.stringify(result))
+}
+
+{
+  const live = makeSession({ nodes: NODES, log: LOG })
+  const result = await rewindSession('session-aaaa', 9, makeCtx({ live }))
+  ok('a boundary at the last node is a no-op', result.ok === true && result.changed === false && result.reason === 'nothing-after-boundary', JSON.stringify(result))
+  ok('a no-op appends nothing', live.appended.length === 0, String(live.appended.length))
+}
+
+{
+  // Boundary -1 is what `turnInfo` reports for turn 1: everything after it goes,
+  // except the system prompt, which must survive or the session loses its rules.
+  const live = makeSession({ nodes: [0], log: [{ type: 'system/message', seq: 0 }] })
+  const result = await rewindSession('session-aaaa', -1, makeCtx({ live }))
+  ok('a surface holding only the system prompt is a no-op', result.ok === true && result.changed === false && result.reason === 'only-the-system-prompt-remains', JSON.stringify(result))
+  ok('the system prompt is never shadowed', live.appended.length === 0, String(live.appended.length))
+}
+
+{
+  const live = makeSession({ nodes: NODES, log: LOG })
+  const result = await rewindSession('session-aaaa', -1, makeCtx({ live }))
+  const shadowed = live.appended[0]?.opts?.sourceEventSeqs ?? []
+  ok('boundary -1 keeps the system prompt out of the shadowed set', shadowed[0] !== 0 && result.startSeq === 2, JSON.stringify(shadowed))
+  ok('boundary -1 shadows everything else', JSON.stringify(shadowed) === JSON.stringify([2, 5, 6, 9]), JSON.stringify(shadowed))
+}
+
+// ---------------------------------------------------------------------------
+// 3. The happy path: exact `append` arguments
+// ---------------------------------------------------------------------------
+
+{
+  const live = makeSession({ nodes: NODES, log: LOG })
+  const flushed = []
+  const result = await rewindSession('session-bbbb', 5, makeCtx({ live, flushed }))
+
+  ok('a rewind at seq 5 reports success', result.ok === true && result.changed === true, JSON.stringify(result))
+  ok('it shadows exactly the nodes after the boundary', JSON.stringify(live.appended[0]?.opts?.sourceEventSeqs) === JSON.stringify([6, 9]), JSON.stringify(live.appended[0]?.opts?.sourceEventSeqs))
+  ok('startSeq is the first shadowed node', result.startSeq === 6, String(result.startSeq))
+  ok('endSeq is the last shadowed node', result.endSeq === 9, String(result.endSeq))
+  ok('the shadowed count is reported for the toast', result.shadowed === 2, String(result.shadowed))
+
+  ok('the appended event is a system/message', live.appended[0]?.type === 'system/message', String(live.appended[0]?.type))
+  ok('it is a surface replace', live.appended[0]?.opts?.surfaceOp?.op === 'replace', JSON.stringify(live.appended[0]?.opts?.surfaceOp))
+  ok('the replace range matches the shadowed range',
+    live.appended[0]?.opts?.surfaceOp?.startSeq === 6 && live.appended[0]?.opts?.surfaceOp?.endSeq === 9,
+    JSON.stringify(live.appended[0]?.opts?.surfaceOp))
+
+  const message = live.appended[0]?.data?.message ?? {}
+  ok('the marker carries an id (the validator rejects an unidentified message)', typeof message.id === 'string' && message.id !== '', JSON.stringify(message.id))
+  ok('the marker id names the session and the range start', message.id === 'rewind-' + bareId('session-bbbb') + '-6', String(message.id))
+  ok('the marker role is system', message.role === 'system', String(message.role))
+  ok('the marker source kind is system-prompt (required for system/message)', message.source?.kind === 'system-prompt', JSON.stringify(message.source))
+  ok('the marker content is an empty array (that is what hides the turns)', Array.isArray(message.content) && message.content.length === 0, JSON.stringify(message.content))
+  ok('the marker carries the current turn number', live.appended[0]?.data?.turn === 2, String(live.appended[0]?.data?.turn))
+  ok('the session is flushed right after the append', flushed.length === 1, String(flushed.length))
+  ok('markerSeq points at the appended event', result.markerSeq === LOG.length, String(result.markerSeq))
+}
+
+// ---------------------------------------------------------------------------
+// 4. A failed append is reported, not swallowed
+// ---------------------------------------------------------------------------
+
+{
+  const live = makeSession({ nodes: NODES, log: LOG, appendThrows: 'session append cannot reenter while another append is being published' })
+  const result = await rewindSession('session-aaaa', 5, makeCtx({ live }))
+  ok('an append failure is an error result', result.ok === false && result.code === 'append-failed', JSON.stringify(result))
+  ok('the failure is a 500', result.status === 500, String(result.status))
+  ok('the validator message is passed through', /cannot reenter/.test(result.error ?? ''), result.error)
+}
+
+// ---------------------------------------------------------------------------
+// 5. `lastTurnNumber`
+// ---------------------------------------------------------------------------
+
+{
+  ok('a session with no turn/start reports turn 0', lastTurnNumber({ log: [] }) === 0, String(lastTurnNumber({ log: [] })))
+  ok('it takes the newest turn, not the first', lastTurnNumber({ log: LOG }) === 2, String(lastTurnNumber({ log: LOG })))
+  ok('a malformed log cannot throw', lastTurnNumber(null) === 0 && lastTurnNumber({}) === 0, 'null/{}')
+  ok('a non-integer turn field is ignored', lastTurnNumber({ log: [{ type: 'turn/start', data: { turn: 'x' } }] }) === 0, 'string turn')
+}
+
+// ---------------------------------------------------------------------------
+// 6. Local mirror of the official surface planner, applied to the real marker
+// ---------------------------------------------------------------------------
+
+// `replacementRange` — surface.js:301. Both endpoints must be current surface
+// nodes, and start must not come after end.
+function mirrorReplacementRange(nodes, startSeq, endSeq) {
+  const startIdx = nodes.indexOf(startSeq)
+  const endIdx = nodes.indexOf(endSeq)
+  if (startIdx === -1) return { error: 'surface replace: start seq ' + startSeq + ' not found in surface' }
+  if (endIdx === -1) return { error: 'surface replace: end seq ' + endSeq + ' not found in surface' }
+  if (startIdx > endIdx) return { error: 'surface replace: start seq ' + startSeq + ' is after end seq ' + endSeq }
+  return { startIdx, endIdx }
+}
+
+// `assertSourceEventReferences` — surface.js:221. Every shadowed node must be
+// listed, each exactly once, each strictly older than the replacing event.
+function mirrorSourceRefs(shadowed, sourceEventSeqs, eventSeq) {
+  if (!Array.isArray(sourceEventSeqs) || sourceEventSeqs.length === 0) return { error: 'sourceEventSeqs must be a non-empty array' }
+  if (new Set(sourceEventSeqs).size !== sourceEventSeqs.length) return { error: 'sourceEventSeqs contains duplicates' }
+  for (const seq of sourceEventSeqs) {
+    if (seq >= eventSeq) return { error: 'sourceEventSeqs must reference earlier events (' + seq + ' >= ' + eventSeq + ')' }
+  }
+  for (const seq of shadowed) {
+    if (!sourceEventSeqs.includes(seq)) return { error: 'sourceEventSeqs must include every shadowed surface node; missing ' + seq }
+  }
+  return {}
+}
+
+// `assertSystemHeadRewrite` — surface.js:373. `if (startIdx !== 0) return;` so a
+// tail-only replace is free; touching node 0 requires a single system node.
+function mirrorSystemHead(startIdx, nodes, eventAt, eventType) {
+  if (startIdx !== 0) return {}
+  if (eventAt(nodes[0])?.type !== 'system/message') return { error: 'node 0 is not a system message' }
+  if (eventType !== 'system/message') return { error: 'node 0 may only be replaced by a system/message' }
+  return {}
+}
+
+// `deriveEventMessage` — surface.js:218. Empty system/developer/assistant
+// content derives null, i.e. the node keeps its position but contributes no
+// wire message. That is precisely how the shadowed turns leave the context.
+function mirrorDeriveMessage(event) {
+  const message = event.type === 'user/message' ? event.data : event.data?.message
+  const content = message?.content
+  if (Array.isArray(content) && content.length === 0) return null
+  return message
+}
+
+{
+  const live = makeSession({ nodes: NODES, log: LOG })
+  const result = await rewindSession('session-cccc', 5, makeCtx({ live }))
+  const marker = live.appended[0]
+  const eventAt = (seq) => live.eventAt(seq)
+  const nodesBefore = NODES
+  const eventSeq = LOG.length
+  const shadowed = marker.opts.sourceEventSeqs
+
+  const range = mirrorReplacementRange(nodesBefore, marker.opts.surfaceOp.startSeq, marker.opts.surfaceOp.endSeq)
+  ok('the marker range resolves against the live surface', range.error === undefined, range.error)
+  ok('the range ends at the last surface node', range.endIdx === nodesBefore.length - 1, String(range.endIdx))
+
+  const refs = mirrorSourceRefs(shadowed, marker.opts.sourceEventSeqs, eventSeq)
+  ok('every shadowed node is referenced exactly once', refs.error === undefined, refs.error)
+
+  const head = mirrorSystemHead(range.startIdx, nodesBefore, eventAt, marker.type)
+  ok('a tail-only replace never trips the node-0 rule', head.error === undefined, head.error)
+
+  // Fold, the way `applySurfacePlan` (surface.js:422) does it.
+  const folded = [
+    ...nodesBefore.slice(0, range.startIdx),
+    eventSeq,
+    ...nodesBefore.slice(range.endIdx + 1),
+  ]
+  ok('the folded surface keeps the system prompt and the boundary', JSON.stringify(folded) === JSON.stringify([0, 2, 5, eventSeq]), JSON.stringify(folded))
+  ok('the fold drops every shadowed node', folded.filter((seq) => shadowed.includes(seq)).length === 0, JSON.stringify(folded))
+
+  ok('the marker derives no wire message, so the turns leave the context', mirrorDeriveMessage({ type: marker.type, data: marker.data }) === null, 'expected null')
+  ok('the boundary message still derives (it is what the model sees last)', mirrorDeriveMessage({ type: 'user/message', data: { message: { role: 'user', content: [{ type: 'text', text: 'hi' }] } } }) !== null, 'expected a message')
+
+  // Negative controls: the mirror must actually reject the mistakes a future
+  // edit could make, otherwise the green above proves nothing.
+  ok('the mirror rejects a range whose start is not a surface node',
+    mirrorReplacementRange(nodesBefore, 7, 9).error !== undefined, 'start=7 (trace-only event)')
+  ok('the mirror rejects a reversed range',
+    mirrorReplacementRange(nodesBefore, 9, 6).error !== undefined, 'start=9 end=6')
+  ok('the mirror rejects an incomplete shadow list',
+    mirrorSourceRefs([6, 9], [6], eventSeq).error !== undefined, 'missing 9')
+  ok('the mirror rejects a reference to the marker itself',
+    mirrorSourceRefs([6, 9], [6, 9, eventSeq], eventSeq).error !== undefined, 'self-reference')
+  ok('the mirror rejects duplicate references',
+    mirrorSourceRefs([6, 9], [6, 9, 9], eventSeq).error !== undefined, 'duplicate 9')
+  ok('the mirror rejects a non-system rewrite of node 0',
+    mirrorSystemHead(0, nodesBefore, eventAt, 'user/message').error !== undefined, 'user/message over node 0')
+  ok('the mirror accepts a system rewrite of node 0',
+    mirrorSystemHead(0, nodesBefore, eventAt, 'system/message').error === undefined, 'system/message over node 0')
+}
+
+// ---------------------------------------------------------------------------
+// 7. Nested rewinds: a second rewind must fold onto the marker, not resurrect
+// ---------------------------------------------------------------------------
+
+{
+  const live = makeSession({ nodes: NODES, log: LOG })
+  await rewindSession('session-dddd', 5, makeCtx({ live }))
+  const first = live.appended[0]
+  const markerSeq = LOG.length
+
+  // The surface after the first rewind is [0, 2, 5, marker], and the marker
+  // event now sits in the log at `markerSeq`. A second click at the same
+  // boundary sees only that marker after the boundary — it must recognise it
+  // and do nothing, otherwise every click stacks another empty node.
+  const markerEvent = {
+    type: 'system/message',
+    seq: markerSeq,
+    data: first.data,
+    surfaceOp: first.opts.surfaceOp,
+    sourceEventSeqs: first.opts.sourceEventSeqs,
+  }
+  const foldedAfterFirst = [0, 2, 5, markerSeq]
+  const live2 = makeSession({ nodes: foldedAfterFirst, log: [...LOG, markerEvent] })
+  const second = await rewindSession('session-dddd', 5, makeCtx({ live: live2 }))
+  ok('a repeated rewind at the same boundary is a no-op, not a double-append',
+    second.changed === false && second.reason === 'already-rewound', JSON.stringify(second))
+  ok('the repeated rewind appends nothing', live2.appended.length === 0, String(live2.appended.length))
+  ok('the first marker is still in the surface', foldedAfterFirst.includes(markerSeq), JSON.stringify(foldedAfterFirst))
+  ok('the first marker was a replace, so no new surface node was created for the log',
+    first.opts.surfaceOp.op === 'replace', JSON.stringify(first.opts.surfaceOp))
+
+  // Negative control: a genuinely new turn after the marker is NOT a marker, so
+  // the guard must let that rewind through.
+  const newTurn = { type: 'user/message', seq: markerSeq + 1 }
+  const live3 = makeSession({ nodes: [...foldedAfterFirst, newTurn.seq], log: [...LOG, markerEvent, newTurn] })
+  const third = await rewindSession('session-dddd', 5, makeCtx({ live: live3 }))
+  ok('a real new turn after the marker is still rewound',
+    third.changed === true && third.startSeq === markerSeq && third.endSeq === newTurn.seq, JSON.stringify(third))
+}
+
+// ---------------------------------------------------------------------------
+// 8. The route exists, is registered, and is reachable
+// ---------------------------------------------------------------------------
+
+{
+  const hostSource = readFileSync(hostPath, 'utf8')
+  ok('the host registers POST /session-rewind', /['"`]\/session-rewind['"`]/.test(hostSource), 'route literal')
+  ok('the route validates the session id before touching anything',
+    /sessionId required/.test(hostSource), 'missing guard')
+  ok('the route validates beforeSeq', /invalid beforeSeq/.test(hostSource), 'missing guard')
+  ok('the route maps a failed rewind onto its HTTP status', /result\.status \?\? 500/.test(hostSource), 'status mapping')
+  ok('the host exports the rewind seam for probing',
+    typeof host.__internals.rewindSession === 'function' && typeof host.__internals.lastTurnNumber === 'function', 'internals')
+  ok('the host never reads an undeclared ctx property for this feature',
+    !/\bctx\.(sessions|agents)\b/.test(hostSource), 'direct ctx.<service> read')
+}
+
+// ---------------------------------------------------------------------------
+// 9. The client stopped forking
+// ---------------------------------------------------------------------------
+
+{
+  const clientSource = readFileSync(clientPath, 'utf8')
+  // Comments legitimately NAME the property this probe forbids (the host-side
+  // note explains why `ctx.get` is used instead), so scan code only.
+  const clientCode = clientSource
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n').map((line) => line.replace(/\/\/.*$/, '')).join('\n')
+
+  ok('the client calls the rewind route', /ROUTE \+ '\/session-rewind'/.test(clientCode), 'route call')
+  ok('the client no longer forks a child to undo', !/sessions\.fork/.test(clientCode), 'fork call')
+  ok('the fork helper is gone', !/openTruncatedChild/.test(clientCode), 'helper')
+  ok('the client no longer deletes the original session after undoing', !/ROUTE \+ '\/session-replace'/.test(clientCode), 'replace call')
+  ok('the undo passes a longer timeout than the default 8s', /postJson\(ROUTE \+ '\/session-rewind', body, 20000\)/.test(clientCode), 'timeout')
+  ok('the draft is prefilled through the conversation service, not a localStorage guess',
+    /get\('conversation'\)/.test(clientCode) && /setDraft\(text\)/.test(clientCode), 'prefill')
+  ok('the prefill falls back instead of throwing',
+    /dsh\.conversation\.\$\{sessionId\}/.test(clientCode), 'fallback')
+  ok('the client does not read pluginCtx.conversation directly',
+    !/pluginCtx\.conversation\b/.test(clientCode), 'undeclared property read')
+}
+
+// ---------------------------------------------------------------------------
+// Summary
+// ---------------------------------------------------------------------------
+
+console.log('\n=== summary ===')
+console.log('  pass: ' + pass)
+console.log('  fail: ' + fail)
+if (fail > 0) {
+  console.log('\nFAILURES:')
+  for (const failure of failures) console.log('  - ' + failure)
+  process.exit(1)
+}
+console.log('\nALL GREEN\n')

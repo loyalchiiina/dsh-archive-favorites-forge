@@ -128,9 +128,9 @@ lib/client.js  客户端半边 —— 官方插槽注册 + 两条 DOM 规则（�
 | `POST /delete` | 带护栏的永久删除（批量，菜单里的单条删除走它） |
 | `GET\|POST /archive-delete-policy` | 归档对话列表的「超时预勾选」开关与阈值（与快照策略**分开存盘**） |
 | `POST /archive-delete` | 批量删除「已归档且未收藏」的对话；宿主侧重建候选集，**无 `confirm: true` 时强制试算**，收藏项拒删 |
-| `POST /session-turn-info` | 某一轮的用户原文、该轮改过的文件清单、以及 fork 边界 |
+| `POST /session-turn-info` | 某一轮的用户原文、该轮改过的文件清单、以及撤销边界 |
 | `POST /session-files-restore` | 回滚某个序号之后被改过的文件 |
-| `POST /session-replace` | fork 接替之后，退掉原会话 |
+| `POST /session-rewind` | 在**同一个会话里**遮蔽某个序号之后的尾部：sessionId 不变、一个字节都不删（0.39.0） |
 | `POST /session-digest` | 只读：把一段长对话蒸馏成「要求时间线 + 任务进度」交接书，供新窗口继续 |
 | `POST /ungrouped-diagnose` | 只读体检：谁会掉进「未分组」、为什么、该怎么处置 |
 | `POST /ungrouped-cleanup` | 一键清理；**无 `confirm: true` 时强制干跑**，执行前会重新体检一次 |
@@ -180,29 +180,54 @@ lib/client.js  客户端半边 —— 官方插槽注册 + 两条 DOM 规则（�
 删除成功后宿主会发出 **harness 自己的 `api-session/removed` 事件**，
 所以侧栏那一行会**立刻消失**，而不是挂到下次刷新。
 
-### 为什么「编辑重发 / 撤销」是「先 fork，再退掉原会话」
+### 为什么「编辑重发 / 撤销」是遮蔽尾部，而不是 fork 新会话
 
-本代 harness 同样**没有「原地截断这条对话」的 RPC**。官方唯一能保留前缀的通道是
-`sessions.fork({ sessionId, atSeq })` —— 它会产出一个**新**的子会话，装下 `atSeq` 之前的内容。
+0.38.x 及以前是三步：`sessions.fork({ sessionId, atSeq })` 开一个装下 `atSeq` 之前内容的
+**新**子会话 → 把附件重新上传、把要重发的那句话塞进子会话 → 最后用 `POST /session-replace`
+把**原会话删掉**，因为原会话此刻已被它自己的 fork 取代。能跑，但方向是错的。
 
-所以两个按钮走的是同一套三步：
+每一次撤销都在制造一条全新的对话：新 sessionId；更要命的是工具清单序列化在请求体**最前面**，
+所以 payload 前缀也全新。本机实测 14 次连续请求：前缀逐字节相同的请求，上游缓存命中率稳定
+**99.4~99.6%**、首包 **5.7~7.0 秒**；而 fork 出来的子会话第一次请求只命中 **2.5%**、首包 **14.5 秒**。
+工具清单里多一个或少一个工具，就足以把共同前缀从 100% 打到 38.4%。撤销一次等于把整个上下文重付一遍。
 
-1. **fork** 到边界处（首轮没有前缀可保留，改用 `sessions.create` 在同一工作区开新会话）；
-2. **可选地回滚文件** —— `POST /session-files-restore` 还原该边界之后 AI 碰过的每个文件；
-3. **退掉原会话** —— `POST /session-replace`，因为原会话此刻已被它自己的 fork 取代，
-   留着会让侧栏每一行都翻倍。
+0.39.0 改用 harness 自己压缩上下文时用的那套机制：
 
-第 3 步是**唯一**允许删掉「已收藏」对话的地方，也正是 `handleDelete` 新增显式 `replace`
-参数、而不是让客户端直接调 `/delete` 的原因：收藏的语义是「这条对话要留着」，
-而这里被退掉的恰恰是**已经被自己的 fork 取代的那一条**。**只有收藏守卫被跳过**，
-其余守卫（必须在 sessions 根内、不能是根本身、非符号链接、必须是目录、EBUSY/EPERM 重试）
-**全部照旧** —— fork 产出的就是一个普通会话目录，上面这些条件没有一条因此变安全。
-这个标志是**独立路由上的显式参数**，所以 `/delete` 的请求体永远无法把它关掉。
+```js
+session.append("system/message", marker, {
+  surfaceOp: { op: "replace", startSeq, endSeq },
+  sourceEventSeqs: shadowed,
+})
+```
 
-`beforeSeq`（fork 边界）取的是该轮 `turn/start` **前一个事件**的序号，而不是 `turn/start` 自己。
-若切在 `turn/start` 与首条用户消息之间，子会话里会留下一个没闭合的 `turn/start`，
-而 fork 会补一条「已完成的轮次」把它闭合 —— 那就是一个幽灵空轮。
+这条事件是**追加**的，日志一行都不删。`sourceEventSeqs` 声明「这条新事件取代了从 `startSeq` 到
+`endSeq` 的全部 surface 节点」，于是折叠 surface 时那些节点不再产生 wire message。
+sessionId 不变、转录文件不变、原对话完整地留在那里。
 
+三个容易做错的细节：
+
+- **`startSeq` / `endSeq` 必须取自 `session.surface.nodes`，不能按日志下标算。**
+  trace 类事件（`turn/start`、`step/start`、`tool/call`）在日志里但没有 surface 节点，
+  按下标算会落到 surface 不认识的序号上，追加直接被拒：
+  `surface replace: start seq X not found in surface`。
+- **node 0 是 system prompt**，只允许被单条 `system/message` 覆盖，所以宿主永远不会从下标 0 开始遮蔽，
+  真挪不动就报 `only-the-system-prompt-remains`，而不是猜着删。
+- **连点两次不能叠。** marker 自己的 seq **大于** `beforeSeq`，所以第二次点会把第一个 marker 也遮蔽、
+  再追加一个新的空节点，点几次多几个。宿主认得出自己的 marker（空 `content` + `message.id` 以 `rewind-` 开头），
+  若尾部**全部**是 marker 就直接回 `already-rewound`，一个字节都不写。
+
+`beforeSeq` 取的是该轮 `turn/start` **前一个事件**的序号，而不是 `turn/start` 自己：
+边界必须落在轮次之外，否则撤销会留下一个没闭合的 `turn/start`。
+
+rewind 不是零成本：替换会让 surface 的 content generation 加一，下一次请求就会开启新的请求系列、
+system prompt 被重新发送，缓存前缀**部分**断裂。但这和 fork 差一个量级 —— fork 是整段全冷。
+（harness 自己的 `/compact` 用的是同一个原语，压缩之后首发命中只有 0~14.8%：
+「压缩上下文」和「高缓存命中」本质上是互斥的。）
+
+这也正是 `POST /session-replace` 和 `handleDelete` 上那个 `replace` 参数被删掉的原因：
+rewind 什么都不删，就再也没有任何流程需要一条「跳过收藏守卫的删除」。
+那条路由是个公开端点，能把**已收藏**的对话在守卫关闭的状态下永久删掉 —— 死代码，
+但是危险的那一种。
 ### 为什么文件快照按内容寻址
 
 每次 `write` / `edit` / `str_replace_editor` 调用**之前**，宿主会把文件当前字节拷到
@@ -328,9 +353,10 @@ reasoning 思考块、step/turn 记账、job 帧，占了长日志的绝大部�
 - **回滚会覆盖当前内容**。它还原的是该轮开始前的字节，所以此后你手改过同一个文件的话，
   那些手改会丢。这正是「撤销」的语义，但勾选前值得知道。
 - **编辑框只预填消息正文**，原消息上的附件**不会**带过来 —— 需要就重新挂。
-  这是刻意为之：附件句柄是按会话隔离的，把它复制进新会话会得到一个悬空引用。
-- **撤销会删掉原会话**。回退实现是「fork + 退掉原会话」，所以撤销前的那条对话**不会**
-  作为隐藏分支留下来。里面有想保留的东西，先复制出来。
+  正文走的是 harness 自己的输入通道（`conversation.input.shell(sessionId).setDraft`），
+  该通道不可用时才退回草稿存储键。
+- **撤销什么都不删。** 0.39.0 起回退是遮蔽同一个会话的尾部：不 fork、不删除、sessionId 不变。
+  被遮蔽的那几轮不再送进模型，但事件仍留在转录文件里，对话永远不会丢，侧栏里也还是同一行。
 - **空白会话不受影响**：它没有轮次，也没有工具调用。
 
 ### 快照清理卡片的边界
@@ -525,26 +551,33 @@ lib/ungrouped-guard.js       未分组体检/清理的自包含模块（可单�
 lib/client.js                客户端半边（__ModuleLoader__ bundle）
 test/probe-client.mjs        客户端契约的 DOM stub 探针
 test/probe-filehistory.mjs   文件快照/回滚字节的端到端探针
+test/probe-rewind.mjs        同会话撤销探针：拒绝路径、空操作、append 的精确参数，外加一份逐条标注出处的官方 surface 规划规则镜像（每条都配反向对照）
 test/probe-ungrouped-guard.mjs 未分组体检/清理 + 孤儿缓存 + 空白会话判定的隔离探针（假 home，11 条会话夹具 + 6 份缓存夹具 + 性能契约）
+test/probe-snapshot-usage.mjs 快照占用扫描的隔离探针（只读、并发、三层路径护栏）
 test/probe-digest.mjs        交接书蒸馏的隔离探针（假 home，18 条事件 + 60 条要求的长对话）
+test/probe-sidebar-watch.mjs 侧栏归档时清快照的 domain/changed 监听探针
+test/probe-delete-ledger.mjs 证明「删对话一定连带删快照」的探针
 ```
 
-四个都跑：
+八个都跑（773 条断言）：
 
 ```sh
 node test/probe-client.mjs
 node test/probe-filehistory.mjs
+node test/probe-rewind.mjs
 node test/probe-ungrouped-guard.mjs
+node test/probe-snapshot-usage.mjs
 node test/probe-digest.mjs
+node test/probe-sidebar-watch.mjs
+node test/probe-delete-ledger.mjs
 ```
 
 它们回答的是**两个不同的问题**，谁也替代不了谁。`probe-client.mjs` 拿真实 bundle 跑在 stub 出来的
 DOM 上，证明**客户端契约**（注册了哪些插槽、每个组件渲染出什么、侧栏增强器不会把侧栏吃掉）。
 `probe-filehistory.mjs` 造一个一次性的假 DSH home（**多帧 zstd** 会话日志 + 磁盘上真实的文件），
 去证明契约测试根本证不了的那一条：**撤销一轮之后，之前的字节是不是真的回来了**。它会复现真实时序
-（`tool/call` 事件在工具执行**之前**发出，所以快照必须存到改动前的字节），也会跑到 fork 出来的子会话
-所用的「从日志反推」兜底路径 —— 这类会话是重放父会话事件继承来的，从未发过 `session/event`，
-因此一条快照都没有。
+（`tool/call` 事件在工具执行**之前**发出，所以快照必须存到改动前的字节），也会跑到「从日志反推」兜底路径 ——
+用于插件上线之前就存在的老会话，它们从未发过自己的 `session/event`，因此一条快照都没有。
 
 两个套件都只写本仓库内的 `.probe-*` 目录，跑完自行删除。
 

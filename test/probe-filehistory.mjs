@@ -254,10 +254,10 @@ console.log('\n=== log-reverse fallback ===\n')
 }
 
 // ---------------------------------------------------------------------------
-// F. Static contract: what is tracked, and what replace-mode delete may skip
+// F. Static contract: what is tracked, and why there is no delete exception
 // ---------------------------------------------------------------------------
 
-console.log('\n=== tracked surface + replace-mode delete ===\n')
+console.log('\n=== tracked surface + no delete exception ===\n')
 
 ok('FILE_TOOL_PATHS lists exactly the three file-writing tools',
   Object.keys(host.__internals.FILE_TOOL_PATHS).sort().join(',') === 'edit,str_replace_editor,write',
@@ -269,17 +269,34 @@ ok('a relative path is extracted but rejected later as non-absolute',
 ok('the blob limit is 8MB', host.__internals.FILE_HISTORY_BLOB_LIMIT === 8 * 1024 * 1024,
   String(host.__internals.FILE_HISTORY_BLOB_LIMIT))
 
-// 🔴 The one guard replace mode is allowed to skip is the FAVOURITE check, and
-// nothing else. Prove both halves: the default path refuses, the explicit
-// `replace` path proceeds — and it is an argument, so no request body can set it.
+// 🔴 0.39.0: the favourite guard has NO exception, and handleDelete has no
+// options parameter to smuggle one through. Both halves are asserted, because
+// "the guard refuses" alone would also pass if a fourth argument were silently
+// accepted — and the whole point is that there is no such argument any more.
 host.__internals.writeState({ version: 1, favorites: { [sessionId]: { at: '2026-01-01T00:00:00.000Z', title: 'fav', cwd } } })
 const guarded = await host.__internals.handleDelete({ sessionIds: [sessionId] }, undefined, {})
-ok('the default delete path still refuses a favourited session',
+ok('the delete path refuses a favourited session',
   guarded.deleted.length === 0 && guarded.skipped.some((s) => s.reason === 'favorited'),
   JSON.stringify(guarded))
-const replaced = await host.__internals.handleDelete({ sessionIds: [sessionId] }, undefined, {}, { replace: true })
-ok('replace mode does remove the favourited session', replaced.deleted.includes(sessionId), JSON.stringify(replaced))
-ok('replace mode really removed the directory', !existsSync(sessionDir), sessionDir)
+ok('handleDelete takes no options parameter', host.__internals.handleDelete.length === 3,
+  'arity ' + host.__internals.handleDelete.length)
+const smuggled = await host.__internals.handleDelete({ sessionIds: [sessionId] }, undefined, {}, { replace: true })
+ok('an extra argument cannot resurrect the old replace bypass',
+  smuggled.deleted.length === 0 && smuggled.skipped.some((s) => s.reason === 'favorited'),
+  JSON.stringify(smuggled))
+ok('the favourited session directory is still on disk', existsSync(sessionDir), sessionDir)
+
+// 🔴 And the route that used to set that flag is gone, while the route that
+// replaced it (rewind) is present — rewind shadows the surface tail and leaves
+// every byte on disk, which is the reason the exception could be deleted at all.
+const hostSource = readFileSync(new URL('../lib/index.js', import.meta.url), 'utf8')
+// The tombstone comment in lib/index.js deliberately names /session-replace, so
+// the test is not "the string is gone" but "no route compares against it".
+ok('no route handler answers /session-replace',
+  hostSource.includes("route === '/session-replace'") === false)
+ok('the tombstone explaining the removal is still there',
+  hostSource.includes('THERE IS NO EXCEPTION TO THE FAVOURITE GUARD'))
+ok('the /session-rewind route took its place', hostSource.includes("route === '/session-rewind'"))
 
 // 🔴 Deleting a session must ALSO drop its projection cache, or the next boot
 // still knows the conversation existed and renders it under 未分组 as a row with
