@@ -494,6 +494,53 @@ function mirrorDeriveMessage(event) {
 }
 
 // ---------------------------------------------------------------------------
+// 11. Refusals speak: no turn-action click ever dies silently
+// ---------------------------------------------------------------------------
+//
+// guard() used to return null without a word when a request was already in
+// flight, or when the current conversation could not be resolved. The user
+// clicked the button, nothing happened, and concluded the feature was broken.
+// Every refusal now either toasts or paints the button red (or both).
+
+{
+  const clientSource = readFileSync(clientPath, 'utf8')
+  const clientCode = clientSource
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n').map((line) => line.replace(/\/\/.*$/, '')).join('\n')
+
+  const guardStart = clientCode.indexOf('const guard = (tag, button) => {')
+  const guardEnd = guardStart < 0 ? -1 : clientCode.indexOf('\n      }\n', guardStart)
+  const guardBody = guardStart >= 0 && guardEnd > guardStart
+    ? clientCode.slice(guardStart, guardEnd)
+    : ''
+
+  ok('the guard that gates every turn action is still there',
+    guardBody.length > 0, 'guard missing')
+
+  ok('no refusal in the guard is silent any more',
+    (() => {
+      const parts = guardBody.split('return null')
+      if (parts.length < 4) return false
+      for (let i = 0; i < parts.length - 1; i += 1) {
+        if (!/toast\(|fail\(/.test(parts[i])) return false
+      }
+      return true
+    })(), 'a return null with no toast and no fail')
+
+  ok('a request already in flight tells the user to wait',
+    /正在处理上一步/.test(guardBody) && /toast\(/.test(guardBody), 'busy toast')
+
+  ok('an unresolved conversation names the thing to do',
+    /找不到当前对话，请先在侧栏点开这条对话再操作/.test(guardBody), 'unknown session message')
+
+  ok('a running session refuses out loud instead of just a red tint',
+    /会话正在运行，请等当前回合结束/.test(guardBody) &&
+      /toast\(why\.message/.test(guardBody), 'running toast')
+
+  ok('resolving the current conversation cannot throw out of a click handler',
+    /try \{[\s\S]{0,40}currentSessionRow\(\)[\s\S]{0,40}catch/.test(guardBody), 'try/catch')
+}
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 

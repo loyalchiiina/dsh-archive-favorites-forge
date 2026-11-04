@@ -4,6 +4,31 @@ All notable changes to this project are documented here.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 this project uses [Semantic Versioning](https://semver.org/).
 
+## 0.39.2 — 2026-11-03
+
+### 「点了没反应」不再发生：每一次拒绝都会说话
+
+0.39.1 补上的是**成功路径**的反馈。失败路径上还藏着第二层沉默：`guard()` 会在两种情况下直接 `return null`，一个字都不说 ——
+
+- 上一个操作还在跑（`busy`）；
+- 定位不到当前对话（`currentSessionRow()` 没有 id，例如侧栏焦点落在别的面板上）。
+
+用户点按钮 → 什么都没有 → 和 0.39.0 的撤销一样，只能被判断成「按钮坏了」。
+
+现在三种拒绝全部有反馈：
+
+| 情况 | 反馈 |
+| --- | --- |
+| 上一个操作还在跑 | toast「正在处理上一步，请稍候…」 |
+| 定位不到当前对话 | 按钮变红 + toast「找不到当前对话，请先在侧栏点开这条对话再操作」 |
+| 会话正在运行 | 按钮变红 + toast「会话正在运行，请等当前回合结束」 |
+
+顺带把 `currentSessionRow()` 包进 try/catch —— 它抛错时不再冒泡打穿 click handler。
+
+### 探针
+
+`test/probe-rewind.mjs` 新增第 11 节「Refusals speak」，6 条断言把「每个 `return null` 前面必须有 toast 或 fail」钉死（90 → 96）。八套探针 793 → 799 全绿。
+
 ## 0.39.1 — 2026-11-03
 
 ### 撤销之后，界面终于告诉你发生了什么

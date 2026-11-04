@@ -419,6 +419,10 @@ auto-delete.
   `data-chat-flow-key`, never by turn number — after a rewind you often resend
   immediately, and the new message can legitimately reuse a turn number you
   just discarded.
+- **A refused click always says why.** Clicking a turn action while a request is
+  still in flight, or before the conversation has been resolved, used to return
+  silently — indistinguishable from a broken button. Since 0.39.2 every refusal
+  toasts a reason, and the two real errors also tint the button red.
 - **Blank conversations are not affected** by any of this: they have no turns
   and no tool calls.
 
@@ -687,7 +691,7 @@ test/probe-sidebar-watch.mjs probe of the domain/changed watcher that purges sna
 test/probe-delete-ledger.mjs proves that deleting a conversation always takes its snapshot ledger with it
 ```
 
-Run all eight (793 assertions):
+Run all eight (799 assertions):
 
 ```sh
 node test/probe-client.mjs
