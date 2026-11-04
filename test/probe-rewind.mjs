@@ -6,11 +6,20 @@
 // cache. Measured on this machine: a 260k-token prefix went from 99.6% cached
 // to 2.5% cached, and the first byte from ~5.7s to 14.5s. Every undo paid it.
 //
-// 0.39.0 instead appends ONE `system/message` carrying
+// 0.39.0 instead appends ONE surface node carrying
 // `surfaceOp: {op:'replace', startSeq, endSeq}` — the same mechanism the
 // official `/compact` uses. The log is untouched, the session id survives, the
 // prefix stays warm. That is a load-bearing claim about someone else's
 // validator, so it is tested here rather than asserted in prose.
+//
+// 0.39.3 CORRECTION: that node used to be a `system/message`, which the v4
+// lifecycle validator only accepts while a turn AND a step are open. An undo is
+// appended after `turn/end`, so the file wrote fine and then FAILED TO LOAD —
+// one user lost access to a whole conversation
+// ("system/message does not match an open turn and step"). The node is now a
+// `user/message`, the only surface type a replace may use outside a turn.
+// Section 7b mirrors that lifecycle validator and goes red if anyone
+// reintroduces a turn-bound type here.
 //
 // TWO LAYERS:
 //   1. `rewindSession` itself, driven against a stub live Session — every
@@ -156,6 +165,16 @@ const NODES = [0, 2, 5, 6, 9]
 }
 
 {
+  // A boundary seq carried over from a log that has since changed: no surface
+  // node sits at or before it. Shadowing the whole conversation is never what
+  // the user asked for, so refuse instead of obeying.
+  const live = makeSession({ nodes: [5, 6, 9], log: LOG })
+  const result = await rewindSession('session-aaaa', 2, makeCtx({ live }))
+  ok('a boundary no surface node sits at is refused, not obeyed', result.ok === false && result.code === 'stale-boundary', JSON.stringify(result))
+  ok('a stale boundary appends nothing', live.appended.length === 0, String(live.appended.length))
+}
+
+{
   // Boundary -1 is what `turnInfo` reports for turn 1: everything after it goes,
   // except the system prompt, which must survive or the session loses its rules.
   const live = makeSession({ nodes: [0], log: [{ type: 'system/message', seq: 0 }] })
@@ -187,19 +206,22 @@ const NODES = [0, 2, 5, 6, 9]
   ok('endSeq is the last shadowed node', result.endSeq === 9, String(result.endSeq))
   ok('the shadowed count is reported for the toast', result.shadowed === 2, String(result.shadowed))
 
-  ok('the appended event is a system/message', live.appended[0]?.type === 'system/message', String(live.appended[0]?.type))
+  ok('the appended event is a user/message (system/message would not load)', live.appended[0]?.type === 'user/message', String(live.appended[0]?.type))
   ok('it is a surface replace', live.appended[0]?.opts?.surfaceOp?.op === 'replace', JSON.stringify(live.appended[0]?.opts?.surfaceOp))
   ok('the replace range matches the shadowed range',
     live.appended[0]?.opts?.surfaceOp?.startSeq === 6 && live.appended[0]?.opts?.surfaceOp?.endSeq === 9,
     JSON.stringify(live.appended[0]?.opts?.surfaceOp))
 
-  const message = live.appended[0]?.data?.message ?? {}
+  const message = live.appended[0]?.data ?? {}
   ok('the marker carries an id (the validator rejects an unidentified message)', typeof message.id === 'string' && message.id !== '', JSON.stringify(message.id))
-  ok('the marker id names the session and the range start', message.id === 'rewind-' + bareId('session-bbbb') + '-6', String(message.id))
-  ok('the marker role is system', message.role === 'system', String(message.role))
-  ok('the marker source kind is system-prompt (required for system/message)', message.source?.kind === 'system-prompt', JSON.stringify(message.source))
-  ok('the marker content is an empty array (that is what hides the turns)', Array.isArray(message.content) && message.content.length === 0, JSON.stringify(message.content))
-  ok('the marker carries the current turn number', live.appended[0]?.data?.turn === 2, String(live.appended[0]?.data?.turn))
+  ok('the marker id names the session and the range start',
+    typeof message.id === 'string' && message.id.startsWith('rewind-' + bareId('session-bbbb') + '-6-'), String(message.id))
+  ok('the marker role is user (a system role would need an open turn)', message.role === 'user', String(message.role))
+  ok('the marker source kind is user (required: non-empty, never "plugin")', message.source?.kind === 'user', JSON.stringify(message.source))
+  ok('the marker content is one short text note (an empty-content user turn would be dropped or rejected)',
+    Array.isArray(message.content) && message.content.length === 1 && message.content[0]?.type === 'text' && typeof message.content[0]?.text === 'string' && message.content[0].text.length > 0, JSON.stringify(message.content))
+  ok('the marker carries no turn/step of its own (it lives outside the turn)',
+    live.appended[0]?.data?.turn === undefined && live.appended[0]?.data?.step === undefined, JSON.stringify({ turn: live.appended[0]?.data?.turn, step: live.appended[0]?.data?.step }))
   ok('the session is flushed right after the append', flushed.length === 1, String(flushed.length))
   ok('markerSeq points at the appended event', result.markerSeq === LOG.length, String(result.markerSeq))
 }
@@ -267,11 +289,14 @@ function mirrorSystemHead(startIdx, nodes, eventAt, eventType) {
 
 // `deriveEventMessage` — surface.js:218. Empty system/developer/assistant
 // content derives null, i.e. the node keeps its position but contributes no
-// wire message. That is precisely how the shadowed turns leave the context.
+// wire message — that is how the shadowed turns leave the context.
+// `user/message` is the exception: it derives its data even when empty.
 function mirrorDeriveMessage(event) {
   const message = event.type === 'user/message' ? event.data : event.data?.message
-  const content = message?.content
-  if (Array.isArray(content) && content.length === 0) return null
+  if (event.type !== 'user/message') {
+    const content = message?.content
+    if (Array.isArray(content) && content.length === 0) return null
+  }
   return message
 }
 
@@ -303,8 +328,13 @@ function mirrorDeriveMessage(event) {
   ok('the folded surface keeps the system prompt and the boundary', JSON.stringify(folded) === JSON.stringify([0, 2, 5, eventSeq]), JSON.stringify(folded))
   ok('the fold drops every shadowed node', folded.filter((seq) => shadowed.includes(seq)).length === 0, JSON.stringify(folded))
 
-  ok('the marker derives no wire message, so the turns leave the context', mirrorDeriveMessage({ type: marker.type, data: marker.data }) === null, 'expected null')
-  ok('the boundary message still derives (it is what the model sees last)', mirrorDeriveMessage({ type: 'user/message', data: { message: { role: 'user', content: [{ type: 'text', text: 'hi' }] } } }) !== null, 'expected a message')
+  const derived = mirrorDeriveMessage({ type: marker.type, data: marker.data })
+  ok('the marker derives one short user note so the model learns the tail was withdrawn',
+    derived !== null && derived.role === 'user' && derived.content?.[0]?.type === 'text', JSON.stringify(derived))
+  ok('the boundary message still derives (it is what the model sees last)',
+    mirrorDeriveMessage({ type: 'user/message', data: { role: 'user', content: [{ type: 'text', text: 'hi' }], source: { kind: 'user' }, id: 'u1' } }) !== null, 'expected a message')
+  ok('the legacy empty system marker still derives nothing (old logs keep working)',
+    mirrorDeriveMessage({ type: 'system/message', data: { message: { role: 'system', content: [] } } }) === null, 'expected null')
 
   // Negative controls: the mirror must actually reject the mistakes a future
   // edit could make, otherwise the green above proves nothing.
@@ -339,7 +369,7 @@ function mirrorDeriveMessage(event) {
   // boundary sees only that marker after the boundary — it must recognise it
   // and do nothing, otherwise every click stacks another empty node.
   const markerEvent = {
-    type: 'system/message',
+    type: 'user/message',
     seq: markerSeq,
     data: first.data,
     surfaceOp: first.opts.surfaceOp,
@@ -362,6 +392,104 @@ function mirrorDeriveMessage(event) {
   const third = await rewindSession('session-dddd', 5, makeCtx({ live: live3 }))
   ok('a real new turn after the marker is still rewound',
     third.changed === true && third.startSeq === markerSeq && third.endSeq === newTurn.seq, JSON.stringify(third))
+}
+
+// ---------------------------------------------------------------------------
+// 7b. The v4 LIFECYCLE gate — the exact bug that broke a real conversation
+// ---------------------------------------------------------------------------
+//
+// This is the gate 0.39.0-0.39.2 failed. A log that violates it is refused when
+// it is LOADED, not when it is written, so a bad append looks fine and then the
+// conversation will not open at all. Mirrored from
+// @deepseek-ai/dsh-session-persistence-jsonl/lib/worker.cjs:
+//   STEP_EVENT_TYPES @11946, accept() @12193, requireStep @12027,
+//   turn/start @12201, turn/end @12207, step/start @12213, step/end @12216,
+//   assistant/message|tool/call|tool/result -> tool() -> requireTurn @12074.
+
+const STEP_TYPES = new Set(['system/message', 'developer/message', 'assistant/attempt'])
+
+function mirrorLifecycle(events) {
+  let turn = null
+  let step = null
+  let nextTurn = 1
+  let nextStep = 1
+  const fail = (event, why) => ({ error: why, seq: event?.seq })
+  for (const event of events) {
+    const data = event.data ?? {}
+    if (STEP_TYPES.has(event.type)) {
+      if (turn === null || step === null || data.turn !== turn || data.step !== step) {
+        return fail(event, event.type + ' does not match an open turn and step')
+      }
+    }
+    switch (event.type) {
+      case 'turn/start':
+        if (turn !== null || data.turn !== nextTurn) return fail(event, 'turn/start does not open the expected turn')
+        turn = nextTurn
+        nextStep = 1
+        break
+      case 'turn/end':
+        if (turn === null || data.turn !== turn || step !== null) return fail(event, 'turn/end does not match the open turn with no open step')
+        turn = null
+        nextTurn += 1
+        break
+      case 'step/start':
+        if (turn === null || data.turn !== turn || step !== null || data.step !== nextStep) return fail(event, 'step/start does not match the open turn and next step')
+        step = nextStep
+        break
+      case 'step/end':
+        if (turn === null || step === null || data.turn !== turn || data.step !== step) return fail(event, 'step/end does not match the open turn and step')
+        step = null
+        nextStep += 1
+        break
+      case 'assistant/message':
+      case 'tool/call':
+      case 'tool/result':
+        if (turn === null) return fail(event, event.type + ' is outside an open turn')
+        if (event.type === 'assistant/message' && (step === null || data.turn !== turn || data.step !== step)) {
+          return fail(event, 'assistant/message does not match an open turn and step')
+        }
+        break
+      default:
+        break
+    }
+  }
+  return {}
+}
+
+{
+  // A legal tail: one user turn, fully opened and closed. No system/message head:
+  // in DSH the system prompt is per-request, and a session-level system/message
+  // outside a turn would be refused by the same gate.
+  const before = [
+    { type: 'user/message', seq: 0, data: { role: 'user', content: [{ type: 'text', text: 'hello' }], source: { kind: 'user' }, id: 'u1' } },
+    { type: 'turn/start', seq: 1, data: { turn: 1 } },
+    { type: 'step/start', seq: 2, data: { turn: 1, step: 1 } },
+    { type: 'assistant/message', seq: 3, data: { turn: 1, step: 1, message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }] } } },
+    { type: 'step/end', seq: 4, data: { turn: 1, step: 1 } },
+    { type: 'turn/end', seq: 5, data: { turn: 1 } },
+  ]
+  ok('the mirror accepts a well-formed closed turn', mirrorLifecycle(before).error === undefined, mirrorLifecycle(before).error)
+
+  const live = makeSession({ nodes: NODES, log: LOG })
+  await rewindSession('session-eeee', 5, makeCtx({ live }))
+  const marker = live.appended[0]
+  const asLog = { type: marker.type, seq: 6, data: marker.data, surfaceOp: marker.opts.surfaceOp, sourceEventSeqs: marker.opts.sourceEventSeqs }
+  const after = [...before, asLog]
+
+  const verdict = mirrorLifecycle(after)
+  ok('an undo appended after turn/end still passes the v4 lifecycle gate', verdict.error === undefined, JSON.stringify(verdict))
+
+  // Negative control: the 0.39.2 shape — same intent, typed system/message —
+  // must be refused, otherwise the green above proves nothing.
+  const systemShape = { type: 'system/message', seq: 6, data: { turn: 1, step: 1, message: { role: 'system', content: [], source: { kind: 'system-prompt' }, id: 'rewind-x-6' } } }
+  const bad = mirrorLifecycle([...before, systemShape])
+  ok('the old system/message marker is rejected outside an open turn', bad.error !== undefined, JSON.stringify(bad))
+  ok('...and the rejection is the exact production error',
+    bad.error === 'system/message does not match an open turn and step', String(bad.error))
+
+  ok('the marker really is a user/message', marker.type === 'user/message', String(marker.type))
+  ok('the host no longer appends a system/message for a rewind',
+    !readFileSync(hostPath, 'utf8').includes("live.append('system/message'"), 'legacy append still present')
 }
 
 // ---------------------------------------------------------------------------

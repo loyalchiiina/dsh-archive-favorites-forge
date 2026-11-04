@@ -231,7 +231,7 @@ whole context every time.
 0.39.0 uses the mechanism the harness itself uses when it compacts:
 
 ```js
-session.append("system/message", marker, {
+session.append("user/message", marker, {
   surfaceOp: { op: "replace", startSeq, endSeq },
   sourceEventSeqs: shadowed,
 })
@@ -243,7 +243,7 @@ declares that this new event supersedes every surface node from `startSeq` to
 session id is unchanged, the transcript file is unchanged, and the original
 conversation is still there in full.
 
-Three details that are easy to get wrong:
+Four details that are easy to get wrong:
 
 - **`startSeq` / `endSeq` come from `session.surface.nodes`, not from log
   indices.** Trace events (`turn/start`, `step/start`, `tool/call`) live in the
@@ -255,8 +255,15 @@ Three details that are easy to get wrong:
   reports `only-the-system-prompt-remains` instead of guessing.
 - **Undoing twice must not stack.** The marker's own seq is greater than
   `beforeSeq`, so a second press would shadow the first marker and append another.
-  The host recognises its own markers (empty `content`, `message.id` starting
-  with `rewind-`) and answers `already-rewound` without writing anything.
+  The host recognises its own markers (`message.id` starting with `rewind-`) and
+  answers `already-rewound` without writing anything.
+- **The marker has to be a `user/message`, never a `system/message`.** The v4
+  loader accepts `system/message` only inside an open turn *and* step, and an
+  undo is appended after `turn/end`. A `system/message` marker is written
+  happily and then makes the whole conversation refuse to load, with
+  `system/message does not match an open turn and step`. `user/message` is the
+  only surface type a replace may use outside a turn. 0.39.0-0.39.2 shipped the
+  broken shape; 0.39.3 fixes it.
 
 `beforeSeq` is the sequence number of the event **immediately before** the
 turn's `turn/start`, not the `turn/start` itself: the boundary must sit outside
@@ -691,7 +698,7 @@ test/probe-sidebar-watch.mjs probe of the domain/changed watcher that purges sna
 test/probe-delete-ledger.mjs proves that deleting a conversation always takes its snapshot ledger with it
 ```
 
-Run all eight (799 assertions):
+Run all eight (808 assertions):
 
 ```sh
 node test/probe-client.mjs

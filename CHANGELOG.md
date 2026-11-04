@@ -4,6 +4,48 @@ All notable changes to this project are documented here.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 this project uses [Semantic Versioning](https://semver.org/).
 
+## 0.39.3 — 2026-11-04
+
+### 修一次会毁掉对话的 bug：撤销写进去的事件，加载器不认
+
+0.39.0 把「撤销 / 编辑重发」从「fork 新会话」改成「在原会话里遮蔽尾部」，靠的是往日志里追加一条带
+`surfaceOp: { op: 'replace' }` 的 **`system/message`**。写盘当时不报错，本地看着一切正常 —— 但 v4 会话校验器
+（`@deepseek-ai/dsh-session-persistence-jsonl` 的 `Relationships.accept` → `requireStep`）只允许 `system/message`
+出现在**已经打开的 turn + step 之内**。撤销是在 `turn/end` 之后追加的，于是日志满足不了这条关系，**下次加载直接失败**：
+
+```
+SessionFormatError: system/message does not match an open turn and step
+```
+
+真实后果：一位用户撤销过一次的那条对话再也打不开。该会话文件已按「删掉两条非法事件 + 后续重新编号」修好，
+内容一条没丢。这是本插件第一次让用户丢东西，记在这里。
+
+### 修法：改用 `user/message`
+
+在 v4 的关系校验里，**唯一能在 turn / step 之外携带 `surfaceOp: replace` 的类型是 `user/message`**
+（`system/message` / `developer/message` / `assistant/attempt` 都要求 open step，`assistant/message` /
+`tool/result` 还要求 open turn）。所以标记事件改成一条 `user/message`，正文是一行固定说明
+「（以上内容已撤回，模型不再看到这部分对话）」—— 顺带让模型知道这里被截断了，而不是无声无息。
+
+旧版本（0.39.0–0.39.2）写在磁盘上的 `system/message` 标记仍能被识别，所以已有的幂等判断不受影响，
+不需要迁移。
+
+### 顺带：撤销边界过期时拒绝，而不是清空整段对话
+
+查这次事故时发现同一个会话里第二条坏事件遮蔽了 `9..870` —— 几乎整段对话。根因是客户端拿着一个**过期的 `beforeSeq`**
+（上一次撤销已经改写了尾部），宿主 `nodes.findIndex(seq => seq > cut)` 找不到任何「边界之前的节点」，
+于是从第一个节点一路遮到末尾。现在加了一条守卫：**只要 `beforeSeq >= 0` 却没有任何 surface 节点落在它前面**，
+直接回 409 `stale-boundary`「这一轮的位置已经变了，请刷新页面后再试」，一个字节都不写。
+### 探针：把加载器的关系规则也镜像进来
+
+以前的探针只镜像了 surface 规划器，**不校验 turn / step 顺序** —— 这正是漏掉本 bug 的原因。
+新增第 7b 节逐条镜像 `accept()` / `requireStep()` / `turn|step` 的开关规则，并做双向断言：
+
+- 一份合法收尾的日志 + 我们的标记 → 必须通过；
+- 同一位置换成旧的 `system/message` → 必须报出**与线上完全一致**的
+  `system/message does not match an open turn and step`。
+
+少了反向对照，绿灯就是空的。
 ## 0.39.2 — 2026-11-03
 
 ### 「点了没反应」不再发生：每一次拒绝都会说话

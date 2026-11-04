@@ -194,7 +194,7 @@ lib/client.js  客户端半边 —— 官方插槽注册 + 两条 DOM 规则（�
 0.39.0 改用 harness 自己压缩上下文时用的那套机制：
 
 ```js
-session.append("system/message", marker, {
+session.append("user/message", marker, {
   surfaceOp: { op: "replace", startSeq, endSeq },
   sourceEventSeqs: shadowed,
 })
@@ -204,7 +204,7 @@ session.append("system/message", marker, {
 `endSeq` 的全部 surface 节点」，于是折叠 surface 时那些节点不再产生 wire message。
 sessionId 不变、转录文件不变、原对话完整地留在那里。
 
-三个容易做错的细节：
+四个容易做错的细节：
 
 - **`startSeq` / `endSeq` 必须取自 `session.surface.nodes`，不能按日志下标算。**
   trace 类事件（`turn/start`、`step/start`、`tool/call`）在日志里但没有 surface 节点，
@@ -213,8 +213,12 @@ sessionId 不变、转录文件不变、原对话完整地留在那里。
 - **node 0 是 system prompt**，只允许被单条 `system/message` 覆盖，所以宿主永远不会从下标 0 开始遮蔽，
   真挪不动就报 `only-the-system-prompt-remains`，而不是猜着删。
 - **连点两次不能叠。** marker 自己的 seq **大于** `beforeSeq`，所以第二次点会把第一个 marker 也遮蔽、
-  再追加一个新的空节点，点几次多几个。宿主认得出自己的 marker（空 `content` + `message.id` 以 `rewind-` 开头），
+  再追加一个新的节点，点几次多几个。宿主认得出自己的 marker（`message.id` 以 `rewind-` 开头），
   若尾部**全部**是 marker 就直接回 `already-rewound`，一个字节都不写。
+- **这个 marker 必须是 `user/message`，绝不能是 `system/message`。** v4 加载器只允许 `system/message`
+  出现在已打开的 turn + step 之内，而撤销是在 `turn/end` 之后追加的。写成 `system/message` 时文件照写不误，
+  然后整条对话就再也打不开，报 `system/message does not match an open turn and step`。
+  `user/message` 是唯一能在轮次之外承载 replace 的 surface 类型。0.39.0–0.39.2 发的就是坏形状，0.39.3 修正。
 
 `beforeSeq` 取的是该轮 `turn/start` **前一个事件**的序号，而不是 `turn/start` 自己：
 边界必须落在轮次之外，否则撤销会留下一个没闭合的 `turn/start`。
@@ -564,7 +568,7 @@ test/probe-sidebar-watch.mjs 侧栏归档时清快照的 domain/changed 监听�
 test/probe-delete-ledger.mjs 证明「删对话一定连带删快照」的探针
 ```
 
-八个都跑（799 条断言）：
+八个都跑（808 条断言）：
 
 ```sh
 node test/probe-client.mjs
