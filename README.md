@@ -1,5 +1,10 @@
 # dsh-archive-favorites-forge
 
+> **功能描述**：DSH 对话管理工具箱：会话归档连文件一起归档，列表清爽但历史完整；收藏常看会话；按轮次撤销回复并保留轮次快照；一键清理快照与归档档案。适配 DSH 内核 0.2.2-rc.1。
+>
+> **English**: Conversation management for DSH: archive a session together with its files so the list stays clean while history survives, star the ones worth keeping, undo the last reply with a per-turn snapshot, and clean up snapshots and archived files from one panel. Adapts DSH kernel 0.2.2-rc.1.
+
+
 **Favourites, copy id+path, per-session delete, idle batch archive, a favourites
 filter, and edit-resend / undo-turn with automatic file rollback for DeepSeek
 Harness conversations** — additive slot extensions over the shipped archive
