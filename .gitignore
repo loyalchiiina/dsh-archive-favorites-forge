@@ -9,3 +9,4 @@ node_modules/
 *.bak-*
 .probe-digest/
 .probe-ungrouped/
+.agents/
