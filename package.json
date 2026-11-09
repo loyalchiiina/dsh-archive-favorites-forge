@@ -23,7 +23,8 @@
     "icon.svg",
     "README-es.md",
     "README-pt.md",
-    "README-hi.md"
+    "README-hi.md",
+    "screenshots.json"
   ],
   "license": "MIT",
   "keywords": [
