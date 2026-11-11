@@ -1,8 +1,8 @@
 # dsh-archive-favorites-forge
 
-> **功能描述**：DSH 对话管理工具箱：会话归档连文件一起归档，列表清爽但历史完整；收藏常看会话；按轮次撤销回复并保留轮次快照；一键清理快照与归档档案。适配 DSH 内核 0.2.2-rc.1。
+> **功能描述**：DSH 对话管理工具箱：收藏常看会话、一键复制会话 ID 与记录文件路径；按闲置时长批量归档 —— 归档只写注册表标记、不搬动任何文件，默认同时把它们的快照账本送进系统回收站；收藏清单可搜索、可排序、可按有快照/无快照筛选；删除对话有二次确认与永久删除护栏；快照清理与孤儿缓存扫描都带实时进度；侧栏「未分组」可一键体检、可清理、默认隐藏。适配 DSH 内核 0.2.2-rc.1。
 >
-> **English**: Conversation management for DSH: archive a session together with its files so the list stays clean while history survives, star the ones worth keeping, undo the last reply with a per-turn snapshot, and clean up snapshots and archived files from one panel. Adapts DSH kernel 0.2.2-rc.1.
+> **English**: Conversation management for DSH: star the sessions worth keeping and copy a session id plus its transcript path in one click; bulk-archive conversations idle for more than N hours — archiving only marks them, moving no file, and by default it also sends their snapshot ledgers to the Windows Recycle Bin; search, sort and filter the favourites list by whether a snapshot exists; delete a conversation behind a two-step confirm with a permanent-delete guard; watch live progress on snapshot cleanup and orphan-cache sweeps; diagnose and clean the sidebar "Ungrouped" bucket, hidden by default. Adapts DSH kernel 0.2.2-rc.1.
 
 
 **Favourites, copy id+path, per-session delete, idle batch archive, a favourites
@@ -14,7 +14,7 @@ feature. It edits **no official file**.
 
 [![npm](https://img.shields.io/badge/npm-dsh--archive--favorites--forge-cb3837?logo=npm)](https://www.npmjs.com/package/dsh-archive-favorites-forge)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![DSH](https://img.shields.io/badge/DSH-%E2%89%A5%200.2.0--rc.2-4f46e5)](https://github.com/loyalchiiina/dsh-archive-favorites-forge)
+[![DSH](https://img.shields.io/badge/DSH-%E2%89%A5%200.2.2--rc.1-4f46e5)](https://github.com/loyalchiiina/dsh-archive-favorites-forge)
 
 English | [简体中文](README.zh.md)
 

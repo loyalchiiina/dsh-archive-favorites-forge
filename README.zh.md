@@ -10,7 +10,7 @@ official file.**
 
 [![npm](https://img.shields.io/badge/npm-dsh--archive--favorites--forge-cb3837?logo=npm)](https://www.npmjs.com/package/dsh-archive-favorites-forge)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![DSH](https://img.shields.io/badge/DSH-%E2%89%A5%200.2.0--rc.2-4f46e5)](https://github.com/loyalchiiina/dsh-archive-favorites-forge)
+[![DSH](https://img.shields.io/badge/DSH-%E2%89%A5%200.2.2--rc.1-4f46e5)](https://github.com/loyalchiiina/dsh-archive-favorites-forge)
 
 [English](README.md) | 简体中文
 

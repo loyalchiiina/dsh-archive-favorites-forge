@@ -4,6 +4,61 @@ All notable changes to this project are documented here.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 this project uses [Semantic Versioning](https://semver.org/).
 
+## 0.42.1 — 2026-11-11
+
+> 重发说明：本版是 0.42.0 的原样重发 —— `lib/index.js` 与 `lib/client.js` 逐字节未改，只修「rc 内核被裸 semver 判成不兼容」这一件元数据事故，外加两处文档口径纠偏。
+
+### 0.42.0 的 peer 区间只给 0.2.0 那个元组开了预发布门
+
+`0.42.0` 的 `peerDependencies` 写的是 `>=0.1.7-rc.1 <0.2.0-0 || >=0.2.0-rc.1`。按 node-semver 的预发布规则，**一个比较符自身带预发布号时，只对同一 `major.minor.patch` 元组的预发布版放行**：`>=0.2.0-rc.1` 的元组被锁死在 `0.2.0`，所以 `0.2.1-rc.3`、`0.2.2-rc.1` 这类「下一个补丁位的 rc」全部判 false。
+
+实测矩阵（`npm` 自带 semver，`includePrerelease` 默认 false）：
+
+| 内核版本 | 旧区间 | 新区间 |
+| --- | --- | --- |
+| `0.2.1-rc.3` | false | **true** |
+| `0.2.2-rc.1` | false | **true** |
+| `0.2.0-rc.2` | true | true |
+| `0.2.1` / `0.2.2`（稳定版） | true | true |
+
+**注意边界，别把它写成「0.2.2 内核装不上」**：DSH 自己的兼容门禁用的是 `semver.satisfies(v, range, { includePrerelease: true })`，旧区间在那边判 true、照常放行；判 false 的是**裸 semver** 场景 —— `npm`/`pnpm` 的 peer 解析、第三方体检脚本、市场侧校验。所以本版修的是「一装就报 `unmet peer`」这类噪音与误判，不是修「插件在 0.2.2-rc.1 上跑不起来」。
+
+修法：`package.json:56`（peerDependencies）与 `:60`（devDependencies）同步改成显式枚举每个 minor 的 rc 门：
+
+```
+>=0.1.7-rc.1 <0.2.0-0 || >=0.2.0-rc.1 <0.2.1-0 || >=0.2.1-rc.1 <0.2.2-0 || >=0.2.2-rc.1
+```
+
+**分支不会自己长出来** —— 每来一个新的 minor 预发布，就得再补一条 `>=0.2.N-rc.1`。这是消耗品，不是一次性修完的常量。同一形态的坑 `0.24.1` 已经踩过一次（那次是 `>=0.1.7-rc.1` 只匹配 `0.1.7` 元组）。
+
+### 徽章跟着内核实装版本走
+
+两份 README 的 DSH 徽章从 `≥ 0.2.0-rc.2` 改成 `≥ 0.2.2-rc.1`（`README.md:17` 与 `README.zh.md:13`，同一串同一位置）。内核实装版本以 `app.asar` 内 `@deepseek-ai/dsh-app-boot/package.json` 的 `version` 为准 —— 那是 DSH 自己 `getDshRuntimeVersion()` 读的那一份。`files` 白名单不需要动。
+
+### 文档纠偏：README 顶部的功能描述停在四件事（无功能改动）
+
+顶部那段 block quote（`README.md:3` 中文 / `:5` 英文）与代码真实行为不符，逐处对照：
+
+| 原写法 | 实际行为 | 代码取证 |
+| --- | --- | --- |
+| 会话归档**连文件一起归档** | 只写注册表标记，不搬动任何文件 | `lib/index.js:3509` `registry.archiveSession(entry.id)`；`:3468` 注释「不释放磁盘字节」 |
+| 列表清爽但**历史完整** | 策略文件缺失或解析失败都返回 `enabled:true`，默认就把快照账本送回收站 | `lib/index.js:390-405` 的 `readArchivePurgePolicy()`、`:3564` `cleanupSnapshotUsage(plan,{dryRun:false})`、`lib/ungrouped-guard.js:1063` `sendToRecycleBin(dir)` |
+| 一键清理快照与**归档档案** | 没有「归档文件」这个对象；对应功能是「删除归档对话」 | 同上 |
+| （缺项 5 条） | 收藏清单搜索/排序/筛选、一键新窗口继续对话、后台定时清理、隐藏定时任务、GitHub Star 入口 | — |
+
+新版按 `package.json` 的 `description` 与市场条目现口径重写，保留「中文在前 English 在后」与结尾的内核句位置。**只改 `README.md:3` 与 `:5`**。
+
+### 校验
+
+- semver 矩阵：旧区间对 `0.2.1-rc.3` / `0.2.2-rc.1` 判 false、新区间判 true；稳定版 `0.2.1` / `0.2.2` 两区间都 true。
+- 代码零改动：`git diff --stat` 只覆盖 `package.json` / `CHANGELOG.md` / `README.md` / `README.zh.md`（+ 删除的 `docs/release-notes-0.42.0.md`），`lib/*.js` 不在其中。
+- 旧串 `0.2.0--rc.2` 全仓 0 命中；两份 README `bom=false`、`\uFFFD=0`。
+- `npm pack --dry-run --json` entryCount = 33（包根不再混进 `README*.bak-*`）。
+
+### 升级提示
+
+`peerDependencies` 只在安装/升级那一刻参与解析，运行期不读 —— **已经装了 0.42.0 的机器不会自动变好**，得重装或升级到 0.42.1 才能消掉 `unmet peer` 告警。`lib/*.js` 逐字节未改，本版没有任何宿主端改动，**不需要为它重启 DSH**。徽章看效果 GitHub 刷新即可。
+
 ## 0.42.0 — 2026-11-11
 
 > 批次说明：`0.40.1` / `0.41.x` 曾是这批改动的中间批次标记，从未单独发布；本版已把代码注释统一为 `0.42.0`（`0.40.0` 与 `0.40.x` 作为历史批次标注保留），并统一记入 `0.42.0`。
@@ -2040,7 +2095,7 @@ With these changes the packages pass every official `dsh-plugin-dev check` item 
 
 ---
 
-## [0.24.2] — 2026-10-10
+## 0.24.2 — 2026-10-10
 
 ### Added
 
@@ -2056,7 +2111,7 @@ With these changes the packages pass every official `dsh-plugin-dev check` item 
   and read as a stuck spinner. When the list is present but the source string is
   not yet set, it now says so instead.
 
-## [0.24.1] — 2026-10-10
+## 0.24.1 — 2026-10-10
 
 ### Fixed
 
@@ -2076,7 +2131,7 @@ With these changes the packages pass every official `dsh-plugin-dev check` item 
   them when the conversation-length sort was removed, leaving an endpoint with
   no consumer.
 
-## [0.24.0] — 2026-10-10
+## 0.24.0 — 2026-10-10
 
 First public release (GitHub + npm).
 
@@ -2137,6 +2192,3 @@ First public release (GitHub + npm).
 - The conversation-length (turn-count) sort and its `/turn-counts` host route —
   removed on request, and the host route was dead code once the UI was gone.
 
-[0.24.2]: https://github.com/loyalchiiina/dsh-archive-favorites-forge/releases/tag/v0.24.2
-[0.24.1]: https://github.com/loyalchiiina/dsh-archive-favorites-forge/releases/tag/v0.24.1
-[0.24.0]: https://github.com/loyalchiiina/dsh-archive-favorites-forge/releases/tag/v0.24.0
