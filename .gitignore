@@ -7,6 +7,8 @@ node_modules/
 .probe-export3/
 .probe-filehistory/
 *.bak-*
+*.pre-splice
 .probe-digest/
 .probe-ungrouped/
 .agents/
+bak-*

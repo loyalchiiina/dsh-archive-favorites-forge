@@ -253,7 +253,7 @@ const NODES = [0, 2, 5, 6, 9]
 // 6. Local mirror of the official surface planner, applied to the real marker
 // ---------------------------------------------------------------------------
 
-// `replacementRange` — surface.js:301. Both endpoints must be current surface
+// `replacementRange` — surface.js 的 replacementRange. Both endpoints must be current surface
 // nodes, and start must not come after end.
 function mirrorReplacementRange(nodes, startSeq, endSeq) {
   const startIdx = nodes.indexOf(startSeq)
@@ -264,7 +264,7 @@ function mirrorReplacementRange(nodes, startSeq, endSeq) {
   return { startIdx, endIdx }
 }
 
-// `assertSourceEventReferences` — surface.js:221. Every shadowed node must be
+// `assertSourceEventReferences` — surface.js 的 assertSourceEventReferences. Every shadowed node must be
 // listed, each exactly once, each strictly older than the replacing event.
 function mirrorSourceRefs(shadowed, sourceEventSeqs, eventSeq) {
   if (!Array.isArray(sourceEventSeqs) || sourceEventSeqs.length === 0) return { error: 'sourceEventSeqs must be a non-empty array' }
@@ -278,7 +278,7 @@ function mirrorSourceRefs(shadowed, sourceEventSeqs, eventSeq) {
   return {}
 }
 
-// `assertSystemHeadRewrite` — surface.js:373. `if (startIdx !== 0) return;` so a
+// `assertSystemHeadRewrite` — surface.js 的 assertSystemHeadRewrite. `if (startIdx !== 0) return;` so a
 // tail-only replace is free; touching node 0 requires a single system node.
 function mirrorSystemHead(startIdx, nodes, eventAt, eventType) {
   if (startIdx !== 0) return {}
@@ -287,7 +287,7 @@ function mirrorSystemHead(startIdx, nodes, eventAt, eventType) {
   return {}
 }
 
-// `deriveEventMessage` — surface.js:218. Empty system/developer/assistant
+// `deriveEventMessage` — surface.js 的 deriveEventMessage. Empty system/developer/assistant
 // content derives null, i.e. the node keeps its position but contributes no
 // wire message — that is how the shadowed turns leave the context.
 // `user/message` is the exception: it derives its data even when empty.
@@ -319,7 +319,7 @@ function mirrorDeriveMessage(event) {
   const head = mirrorSystemHead(range.startIdx, nodesBefore, eventAt, marker.type)
   ok('a tail-only replace never trips the node-0 rule', head.error === undefined, head.error)
 
-  // Fold, the way `applySurfacePlan` (surface.js:422) does it.
+  // Fold, the way `applySurfacePlan` (surface.js 的 applySurfacePlan) does it.
   const folded = [
     ...nodesBefore.slice(0, range.startIdx),
     eventSeq,

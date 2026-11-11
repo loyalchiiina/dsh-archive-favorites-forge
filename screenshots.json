@@ -1,6 +1,10 @@
 [
-  "assets/03-quick-start.png",
-  "assets/04-batch-archive.png",
-  "assets/06-snapshot-cleanup.png",
-  "assets/07-favourites-list.png"
+  "assets/10-snapshot-cleanup.png",
+  "assets/16-permanent-delete-confirm.png",
+  "assets/13-favourites-list.png",
+  "assets/09-batch-archive.png",
+  "assets/11-archive-delete.png",
+  "assets/12-cache-ungrouped.png",
+  "assets/14-view-options-menu.png",
+  "assets/17-undo-turn-confirm.png"
 ]

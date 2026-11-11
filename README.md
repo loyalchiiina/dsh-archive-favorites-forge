@@ -24,11 +24,11 @@ English | [简体中文](README.zh.md)
 
 **1. The session menu** — favourite / unfavourite, copy id + path and continue-in-a-new-window added to the shipped 「…」 menu; pin, rename, fork and archive stay on the official rows:
 
-![Session menu](assets/01-session-menu.png)
+![Session context menu](assets/15-context-menu.png)
 
 **2. Favourites and filters** — two extra rows in the official 筛选会话 group, narrowing the sidebar to favourites that are archived and to favourites that are not. The same menu carries grouping and ordering:
 
-![Favourites filter](assets/02-favourites-filter.png)
+![View options and favourites filters](assets/14-view-options-menu.png)
 
 **3. Quick start** — the landing panel of Settings → 归档助手: three things to keep apart (archive / delete snapshots / delete the conversation), what each of the six panels does, and the three safety rules. Opening the page scans nothing:
 
@@ -36,23 +36,41 @@ English | [简体中文](README.zh.md)
 
 **4. Batch archive** — pick un-archived conversations by idle time; the six-column table carries real size, idle age, file count, workspace and timestamp. The 「归档后顺带删除这些对话的快照」 switch at the bottom is on by default:
 
-![Batch archive](assets/04-batch-archive.png)
+![Batch archive](assets/09-batch-archive.png)
 
 **5. Delete archived** — lists only archived conversations that are not favourites, behind a red button and two confirmations. The title says outright that this delete is permanent and never reaches the Recycle Bin:
 
-![Delete archived](assets/05-archive-delete.png)
+![Delete archived](assets/11-archive-delete.png)
 
 **6. Snapshot cleanup** — measures what each session history-file occupies, then sends the ticked ones to the Windows Recycle Bin (recoverable). Favourites are never part of the deletable list:
 
-![Snapshot cleanup](assets/06-snapshot-cleanup.png)
+![Snapshot cleanup](assets/10-snapshot-cleanup.png)
 
-**7. The favourites list** — read-only. Each row shows the size of the whole session directory, how long it has been idle, its file count and the last update time. A favourite is never deletable:
+**7. The favourites list** — read-only. Each row shows the size of the whole session directory, how long it has been idle, its file count and the last update time. A favourite is never deletable, and the card totals its rows as 「共占 Z（整会话目录）」 over each whole session directory, not snapshot bytes. That is a different measurement from 快照清理's snapshot bytes, so the two totals are not comparable.
 
-![Favourites list](assets/07-favourites-list.png)
+![Favourites list](assets/13-favourites-list.png)
 
 **8. The per-turn buttons** — 复制 → ↺ undo → ✏️ edit-and-resend → 🗑 delete under every human message, including the messages you interject mid-turn:
 
-![Turn actions](assets/08-turn-actions.png)
+![Turn actions](assets/18-turn-actions.png)
+
+### 9. Permanent-delete confirmation
+
+![Permanent delete confirmation](assets/16-permanent-delete-confirm.png)
+
+Deleting a conversation shows a red confirm step naming exactly what it wipes. There is no silent permanent delete.
+
+### 10. Undo-turn confirmation
+
+![Undo turn confirmation](assets/17-undo-turn-confirm.png)
+
+「撤销此轮」 asks before rolling the session back, and shows what will be removed.
+
+### 11. Cache and ungrouped
+
+![Cache and ungrouped](assets/12-cache-ungrouped.png)
+
+The ungrouped health check and the orphan-cache sweep — the two read-mostly panels that never touch your conversations.
 
 ---
 
@@ -84,21 +102,24 @@ so it composes with the shipped UI instead of patching it.
 | ① | **收藏对话**：归档或未归档的对话都能收藏；「…」菜单项 + 行内 ☆，星标即时生效 | **Favourite any conversation** — archived or not; a menu row plus an inline ☆ star, applied optimistically |
 | ② | **复制 ID + 路径**：「…」菜单一键复制会话 ID 与转录文件绝对路径（两行） | **Copy id + path** — one menu row copying the session id and the transcript's absolute path |
 | ③ | **单条永久删除**：任意非收藏对话可删，二次确认；删完侧栏**立即移除该行** | **Per-conversation permanent delete** — any non-favourite, behind a confirmation, and the sidebar row disappears at once |
-| ④ | **批量归档闲置对话**：把闲置超过 N 小时的未归档对话一次性归档，可撤回；**候选直接列在卡片里**（统一六列，见 ⑱），不必先导出清单才知道要归档什么 | **Idle batch archive** — archives conversations quiet for more than N hours, undoable; the candidates are **listed right in the card** in the shared six columns (see ⑱), so you never have to export a list just to see what would be archived |
-| ⑤ | **导出清单**：制表符分隔的 txt，含**对话名称 / 对话ID / 所属工作区 / 闲置时长 / 最后活动时间**；可复制路径或直接打开所在文件夹 | **Export list** — a tab-separated txt with name, id, workspace, idle time and last-activity time; copy its path or reveal it in the file manager |
-| ⑥ | **收藏筛选**：视图选项菜单新增「仅显示收藏（已归档）」与「仅显示收藏（未归档）」 | **Favourites filter** — view-options rows for favourites that are archived, and favourites that are not |
-| ⑦ | **批量删除**：一键永久删除「已归档且未收藏」的对话，清单用统一六列（见 ⑱） | **Batch delete** — permanently removes the archived-and-unfavourited conversations; the list uses the shared six columns (see ⑱) |
-| ⑧ | **删除护栏**：收藏项拒删、越出会话根目录拒删、符号链接拒删、逐条报告、批量上限 | **Delete guardrails** — favourites refused, paths outside the sessions root refused, symlinks refused, per-id reporting, batch cap |
-| ⑨ | **编辑重发**：任意一条用户消息下多一个 ✏️，点开就是内联编辑框（可拖入文件 / 粘贴图片，最多 10 个附件、单个 8MB），发送即截断到该消息之前并重发 | **Edit and resend** — a ✏️ under any user message opens an inline editor (drag files or paste images, 10 attachments max, 8 MB each); sending truncates the conversation to just before that message and resends |
-| ⑩ | **撤销整轮**：↺ 把对话回退到该轮之前，并**默认同时还原这一轮里被 AI 改过的文件**（确认框里列出将被回滚的路径，可取消勾选只回退对话） | **Undo a turn** — ↺ rewinds the conversation to before that turn and, by default, also **restores the files the assistant changed during it** (the confirm dialog lists the affected paths; untick to rewind the conversation only) |
-| ⑪ | **文件快照**：AI 每次改文件（`write` / `edit` / `str_replace_editor`）前自动留一份内容快照，撤销时按最早的改动记录还原；没有快照的老会话从日志反推 | **File snapshots** — every `write` / `edit` / `str_replace_editor` call snapshots the file's prior bytes first; undo restores from the earliest change after the boundary, and falls back to reconstructing from the transcript log for conversations that predate the plugin |
-| ⑫ | **未分组体检**：只读诊断侧栏「未分组」里到底有哪几条会话、每条为什么在那儿、该怎么处置；**先试算再执行**，删的一律进回收站 | **Ungrouped health check** — a read-only diagnosis of exactly which conversations sit in the sidebar's "Ungrouped" bucket, why each one is there, and what to do with it; a dry run comes first and deletes go to the recycle bin |
-| ⑬ | **未分组硬门**：插件每次启动 8 秒后自检一次，有游离会话就在日志里告警并指路体检卡片；干净则记一行 `clean` | **Ungrouped boot gate** — 8 seconds after every start the plugin re-checks; a non-empty bucket logs a warning naming the first ten ids, a clean one logs a single `clean` line |
-| ⑭ | **孤儿缓存清理**：清掉「会话目录已不在、但投影缓存还留着」的孤儿记录——这是「未分组」清完又冒出来的真正原因，目录扫描看不见它。**0.36.0 起默认全部可删**，要保留置顶/已归档那几条就勾一个框 | **Ghost-cache sweep** — removes orphan projection records whose session directory is long gone; this is why the bucket keeps reappearing and no directory scan can see it. **Everything is deletable by default since 0.36.0**; tick one box to spare the pinned / archived rows |
-| ⑮ | **隐藏「未分组」分组**：一个纯视图开关（**默认开启**），把侧栏底部那个分组（连组头）整体藏起来，不删任何对话 | **Hide the "Ungrouped" group** — a pure view switch (**on by default**) that hides the whole bucket (header and rows) from the sidebar; nothing is deleted |
-| ⑯ | **新窗口继续对话**：把长对话蒸馏成一份交接书（用户要求时间线 + 任务进度清单 + 团队任务 + 最近进展），先弹窗报告「检测到任务进行到 第 N 轮」，确认后新开一个 `新对话-<原名>`、**继承原对话的预设智慧体**并自动把交接书发过去 | **Continue in a new window** — distils a long conversation into a handover brief (requirement timeline, task progress, team tasks, latest progress), reports "you are N turns in" first, then on confirm opens `新对话-<original title>` with the **original agent preset inherited** and sends the brief as its first message |
-| ⑰ | **快照清理（统计 + 手动删除）**：设置页「快照清理」栏点「立即统计」才扫一次（渲染时不扫、无定时器），列出每个会话 `history-file/` 占了多少、多少个快照文件、多少条记录、**不活跃时长**；**收藏的会话不进可删列表**，只在汇总行单独报；可选打开「超时预勾选」（默认关，开前须确认风险）自动勾上超时行，删除仍需先试算再二次确认，删的目录进 Windows 回收站。**绝不自动清理** | **Snapshot usage & manual cleanup** — one press of "measure now" scans the ledger directories once (never on render, never on a timer), reporting bytes, blob count, row count, **idle time and last snapshot time** per conversation, in the shared six columns (see ⑱); **favourited conversations are lifted out of the cleanup list** and reported on a separate summary line; an optional "pre-tick idle rows" switch (off by default, risk acknowledgement required) ticks rows past the threshold after each scan; deletion still needs a dry run plus a confirm, and the directory goes to the recycle bin. **Nothing is ever pruned automatically** |
-| ⑱ | **列表统一六列**：**每一栏**的列表都是同一套列 —— `文件大小 \| 时长 \| 对话名称 \| 文件数量 \| 工作区名称 \| 时间`，由一个共用行组件渲染，缺失值统一显示破折号而不是留空（详见 "The six-column row format"）；文件大小与文件数量取自该会话的**整个目录**（转录 + 快照账本 = 删掉它能腾出多少），工作区名称取工作区注册表标题（没有标题才退回文件夹名），且**只在你点开那一栏时才量**，单次上限 120 行、并发 8；**0.38.0 起列顺序可拖动、列宽可拖拽调整**，表头与行共用同一套网格所以永远对齐 | **One row format everywhere** — every list on the page uses the same six columns (`文件大小 \| 时长 \| 对话名称 \| 文件数量 \| 工作区名称 \| 时间`), drawn by a single shared row component, with an em dash for a cell that genuinely has no value instead of a blank one; size and file count come from the **whole session directory** (transcript + ledger — i.e. what deleting that row frees), the workspace name comes from the workspace registry title (falling back to the folder name), and all of it is measured **only when you open that panel**, capped at 120 rows per request with a fan-out of 8. **Since 0.38.0 the columns are draggable** (drag a caption to reorder, drag its right edge to resize) and caption plus rows share one grid, so they always line up |
+| ④ | **快照清理的永久删除（跳过回收站，宿主 API 与界面均已接入）**：请求体 `permanent:true`，且必须 `confirm:true`、`dryRun:false` 三条件同时满足才生效；只对本次请求有效、不写进任何策略文件。**界面已接入**：入口在快照清理卡的两段式确认块里，是一个**默认未勾选**的次级勾选项「⚠ 永久删除（不进回收站，无法恢复）」；勾上只换样式与文案（确认按钮变红、按钮文字变「确认永久删除（不可恢复）」、并显示「即将永久抹掉 N 个会话的快照，共 X」），**勾选本身不发请求**，再点那个红按钮才发请求（`permanent:true`，且必须同时 `confirm:true`、`dryRun:false` 三条件）；点「预览」时无论勾没勾都只试算、绝不带 `permanent`；删完回执首行是「【已永久删除：不进回收站，无法恢复】…｜永久抹除 N」；只对本次请求生效、不写进任何策略文件，后台定时清理永不使用永久删除。不勾选则默认仍走 Windows 回收站 | **Permanent delete for snapshot cleanup that skips the Recycle Bin (host API and UI)** — takes effect only when `permanent:true`, `confirm:true` and `dryRun:false` are all present; it applies to that one request and is never written into a policy file. **The UI is wired up too**: the entry is a sub-checkbox inside the snapshot cleanup card's two-step confirmation block, 「⚠ 永久删除（不进回收站，无法恢复）」, **unchecked by default**; ticking it only swaps styling and copy (the confirm button turns red, its label becomes 「确认永久删除（不可恢复）」, and it shows 「即将永久抹掉 N 个会话的快照，共 X」) — **ticking alone sends no request**; the red button then sends `permanent:true`, which still requires `confirm:true` and `dryRun:false`; 「预览」 only ever dry-runs and never carries `permanent`; the receipt's first line is 「【已永久删除：不进回收站，无法恢复】…｜永久抹除 N」; it applies to that one request and is never written into a policy file, and the background timer never uses permanent delete. Left unticked, the default stays the Windows Recycle Bin |
+| ⑤ | **批量归档闲置对话**：把闲置超过 N 小时的未归档对话一次性归档，可撤回；**候选直接列在卡片里**（统一六列，见 ⑲），不必先导出清单才知道要归档什么 | **Idle batch archive** — archives conversations quiet for more than N hours, undoable; the candidates are **listed right in the card** in the shared six columns (see ⑱), so you never have to export a list just to see what would be archived |
+| ⑥ | **导出清单**：制表符分隔的 txt，含**对话名称 / 对话ID / 所属工作区 / 闲置时长 / 最后活动时间**；可复制路径或直接打开所在文件夹 | **Export list** — a tab-separated txt with name, id, workspace, idle time and last-activity time; copy its path or reveal it in the file manager |
+| ⑦ | **筛选会话**：5 个互斥单选项，任一时刻只有一个 ✓、点一下立即生效 —— `隐藏已归档`（默认）/ `全部对话（显示已归档）` / `仅显示已归档` / `仅显示收藏（已归档）` / `仅显示收藏（未归档）` | **Conversation filter** — five exclusive options, exactly one checked at a time and applied on click: hide archived (default) / all conversations (show archived) / archived only / archived favourites only / unarchived favourites only |
+| ⑧ | **批量删除**：一键永久删除「已归档且未收藏」的对话，清单用统一六列（见 ⑲） | **Batch delete** — permanently removes the archived-and-unfavourited conversations; the list uses the shared six columns (see ⑱) |
+| ⑨ | **删除护栏**：收藏项拒删、越出会话根目录拒删、符号链接拒删、逐条报告、批量上限 | **Delete guardrails** — favourites refused, paths outside the sessions root refused, symlinks refused, per-id reporting, batch cap |
+| ⑩ | **编辑重发**：任意一条用户消息下多一个 ✏️，点开就是内联编辑框（可拖入文件 / 粘贴图片，最多 10 个附件、单个 8MB），发送即截断到该消息之前并重发 | **Edit and resend** — a ✏️ under any user message opens an inline editor (drag files or paste images, 10 attachments max, 8 MB each); sending truncates the conversation to just before that message and resends |
+| ⑪ | **撤销整轮**：↺ 把对话回退到该轮之前，并**默认同时还原这一轮里被 AI 改过的文件**（确认框里列出将被回滚的路径，可取消勾选只回退对话） | **Undo a turn** — ↺ rewinds the conversation to before that turn and, by default, also **restores the files the assistant changed during it** (the confirm dialog lists the affected paths; untick to rewind the conversation only) |
+| ⑫ | **文件快照**：AI 每次改文件（`write` / `edit` / `str_replace_editor`）前自动留一份内容快照，撤销时按最早的改动记录还原；没有快照的老会话从日志反推 | **File snapshots** — every `write` / `edit` / `str_replace_editor` call snapshots the file's prior bytes first; undo restores from the earliest change after the boundary, and falls back to reconstructing from the transcript log for conversations that predate the plugin |
+| ⑬ | **未分组体检**：只读诊断侧栏「未分组」里到底有哪几条会话、每条为什么在那儿、该怎么处置；**先试算再执行**，删的一律进回收站 | **Ungrouped health check** — a read-only diagnosis of exactly which conversations sit in the sidebar's "Ungrouped" bucket, why each one is there, and what to do with it; a dry run comes first and deletes go to the recycle bin |
+| ⑭ | **未分组硬门**：插件每次启动 8 秒后自检一次，有游离会话就在日志里告警并指路体检卡片；干净则记一行 `clean` | **Ungrouped boot gate** — 8 seconds after every start the plugin re-checks; a non-empty bucket logs a warning naming the first ten ids, a clean one logs a single `clean` line |
+| ⑮ | **孤儿缓存清理**：清掉「会话目录已不在、但投影缓存还留着」的孤儿记录——这是「未分组」清完又冒出来的真正原因，目录扫描看不见它。**0.36.0 起默认全部可删**，要保留置顶/已归档那几条就勾一个框 | **Ghost-cache sweep** — removes orphan projection records whose session directory is long gone; this is why the bucket keeps reappearing and no directory scan can see it. **Everything is deletable by default since 0.36.0**; tick one box to spare the pinned / archived rows |
+| ⑯ | **隐藏「未分组」分组**：一个纯视图开关（**默认开启**），把侧栏底部那个分组（连组头）整体藏起来，不删任何对话 | **Hide the "Ungrouped" group** — a pure view switch (**on by default**) that hides the whole bucket (header and rows) from the sidebar; nothing is deleted |
+| ⑰ | **新窗口继续对话**：把长对话蒸馏成一份交接书（用户要求时间线 + 任务进度清单 + 团队任务 + 最近进展），先弹窗报告「检测到任务进行到 第 N 轮」，确认后新开一个 `新对话-<原名>`、**继承原对话的预设智慧体**并自动把交接书发过去 | **Continue in a new window** — distils a long conversation into a handover brief (requirement timeline, task progress, team tasks, latest progress), reports "you are N turns in" first, then on confirm opens `新对话-<original title>` with the **original agent preset inherited** and sends the brief as its first message |
+| ⑱ | **快照清理（统计 + 手动删除）**：设置页「快照清理」栏点「立即统计」才扫一次（统计不在渲染时扫；后台清理是另一套可选定时器），列出每个会话 `history-file/` 占了多少、多少个快照文件、多少条记录、**不活跃时长**；**收藏的会话不进可删列表**，只在汇总行单独报；可选打开「超时预勾选」（默认关，开前须确认风险）自动勾上超时行，删除仍需先试算再二次确认，删的目录进 Windows 回收站；删除过程有**实时进度**（`stream: true` 走 NDJSON，扫描前先出 `start` 首帧，逐目录上报，断流自动退回 400 ms 轮询）。**0.40.0 起提供可选的后台定时清理**（默认关闭，需在设置页显式开启；开启后按小时自动清理「未收藏 + 超过阈值」会话的 `history-file/`，仍只动 `history-file/`、仍送回收站、每轮有上限） | **Snapshot usage & manual cleanup** — one press of "measure now" scans the ledger directories once (measurement never runs on render; background pruning is a separate, optional timer), reporting bytes, blob count, row count, **idle time and last snapshot time** per conversation, in the shared six columns (see ⑱); **favourited conversations are lifted out of the cleanup list** and reported on a separate summary line; an optional "pre-tick idle rows" switch (off by default, risk acknowledgement required) ticks rows past the threshold after each scan; deletion still needs a dry run plus a confirm, and the directory goes to the recycle bin. **Since 0.40.0 an optional background pruner exists** (off by default, must be enabled explicitly; once on it prunes only the `history-file/` of non-favourited sessions past the threshold, still to the recycle bin, still capped per run). Deletions report **live progress** (`stream: true` streams NDJSON, a `start` frame before scanning, one line per directory; the client falls back to a 400 ms poll if the stream stalls) |
+| ⑲ | **列表统一六列**：**每一栏**的列表都是同一套列 —— `文件大小 \| 时长 \| 对话名称 \| 文件数量 \| 工作区名称 \| 时间`，由一个共用行组件渲染，缺失值统一显示破折号而不是留空（详见 "The six-column row format"）；文件大小与文件数量取自该会话的**整个目录**（转录 + 快照账本 = 删掉它能腾出多少），工作区名称取工作区注册表标题（没有标题才退回文件夹名），且**只在你点开那一栏时才量**，单次上限 120 行、并发 8；**0.38.0 起列顺序可拖动、列宽可拖拽调整**，表头与行共用同一套网格所以永远对齐 | **One row format everywhere** — every list on the page uses the same six columns (`文件大小 \| 时长 \| 对话名称 \| 文件数量 \| 工作区名称 \| 时间`), drawn by a single shared row component, with an em dash for a cell that genuinely has no value instead of a blank one; size and file count come from the **whole session directory** (transcript + ledger — i.e. what deleting that row frees), the workspace name comes from the workspace registry title (falling back to the folder name), and all of it is measured **only when you open that panel**, capped at 120 rows per request with a fan-out of 8. **Since 0.38.0 the columns are draggable** (drag a caption to reorder, drag its right edge to resize) and caption plus rows share one grid, so they always line up |
+| ⑳ | **GitHub Star 入口**：设置页「快照清理」标题行右端、以及「归档助手」页头右侧各一个小星标；地址取自 `package.json` 的 `repository.url`（回退 `homepage`，**不硬编码**），点击经宿主 `shell.openExternal` 打开，白名单只放行 `https:` + 精确 `github.com` / `www.github.com` | **GitHub star link** — a small star in the 「快照清理」 card header and in the 归档助手 page header; the URL comes from `package.json` `repository.url` (falling back to `homepage`, **never hard-coded**), opened through the host's `shell.openExternal`, allow-listed to `https:` plus the exact hosts `github.com` / `www.github.com` |
+| ㉑ | **隐藏定时任务**：**只要某个会话与定时任务有关（为任务预留、是任务的投递目标、或被任务触及），该会话就隐藏**；判定与时间无关 —— **未到点、刚到点、早已到点都一样隐藏，不会弹回来**。想看的时候把开关关掉，被隐藏的会话即刻全部恢复显示（无需刷新）。这是**独立开关，不与上一组 5 个互斥项混**（那 5 个是「筛选」，这个是「藏起来看不着」）；默认开，只对未归档会话生效（已归档会话走另一套过滤） | **Hide scheduled tasks** — when the toggle is on, **any session tied to a scheduled task — reserved for one, delivered into by one, or merely touched by one — is hidden**. The rule is time-independent: **a session stays hidden whether its task is not yet due, just became due, or long overdue, and nothing pops back into the sidebar when a timer fires.** Turn the toggle off whenever you want to look — every hidden session reappears immediately, no refresh needed. It is a **separate switch**, not part of the five exclusive filter rows (those five filter, this one just hides); on by default, applies to unarchived conversations only (archived ones are filtered separately) |
 
 ### Where each feature lives
 
@@ -117,9 +138,9 @@ so it composes with the shipped UI instead of patching it.
 dsh plugin --profile <profile> add dsh-archive-favorites-forge
 ```
 
-Then **fully quit and reopen DSH**. The host half (`lib/index.js`) has no
-watcher in this harness generation, and the client bundle is snapshotted at
-startup — so a page refresh alone does **not** pick up a new version.
+Then **fully quit and reopen DSH**. The host half (`lib/index.js`) has no watcher in this harness generation, so it only loads at process start.
+The client half (`lib/client.js`) is usually hot-swapped by the host's bundle polling; when unsure, fully quitting and reopening is the reliable path.
+The Windows desktop build binds no Ctrl+Shift+R — the only full-reload entry is the desktop menu's 「重新加载界面 / Reload Interface」.
 
 ## How it works
 
@@ -440,10 +461,20 @@ auto-delete.
 
 ### Limits of the snapshot usage card (快照清理)
 
-- **It only measures, it never cleans.** No timer, no size ceiling, no age
-  policy. Every byte reported and every delete performed follows a button press.
-  Automatic pruning used to exist here and was removed **because it could delete
-  the wrong thing silently** — it is not coming back.
+- **Measuring and cleaning are two separate paths.** Measurement scans only when
+  you press the button. Cleaning either follows your click, or follows the
+  optional background pruner you turned on yourself (since 0.40.0, **off by
+  default**). The measurement side still has no size ceiling and no age policy;
+  the pruner only ever considers sessions that are un-favourited **and** past the
+  idle threshold you configured.
+- **Automatic pruning was removed in October 2026 because it could delete the
+  wrong thing silently** — and that reason still stands. It is back in 0.40.0
+  only as an opt-in, carrying three guardrails that make silent deletion
+  impossible: it does not exist unless the policy file says literal `true`;
+  favourited sessions are never touched; and each run deletes nothing but
+  `history-file/` directories, capped per run, all to the recycle bin. A pruner
+  that is off by default cannot delete anything behind your back — that is the
+  entire reason it was allowed back.
 - **Deleting a ledger costs that conversation its rollback history.** The
   conversation itself, its transcript and every file on disk stay exactly as they
   are; what disappears is the ability to undo a turn in *that* conversation.
@@ -463,7 +494,7 @@ auto-delete.
   able to pass an age threshold by looking brand new.
 - **Favourites are protected twice.** They are lifted out of the list for
   display, and the host refuses them again on `/snapshot-cleanup` (logging the
-  refusal). Hiding a checkbox is a convention; refusing the write is the guard.
+  refusal). Hiding a checkbox is a convention; refusing the write is the guard. The summary line reports both halves — 「可清理 N 个会话 / 共 X」 for the deletable subset and 「· 全部 Y（含已收藏）」 for the whole set — so a favourite is still counted after being lifted out of the list.
 - **The idle pre-tick switch is not a delete switch.** It only decides which
   rows arrive already ticked after a scan. Every delete still costs two clicks,
   and turning the switch on first shows a risk box that names what will be
@@ -473,6 +504,28 @@ auto-delete.
   old turn", losing a conversation costs the conversation. One shared policy
   would let a cautious snapshot threshold silently authorise deleting chats, so
   the two policies live in different files.
+
+- **Closing the settings page or the window does not stop a manual cleanup that
+  is already running.** Once 「清理快照」 is pressed the deletion runs inside the
+  **host Node process**: closing the settings page, switching tabs or refreshing
+  the page only drops the live progress frames, while the deletion loop keeps
+  going and does finish. The job id lives in localStorage, so re-opening the
+  settings page **within 10 minutes resumes the progress view**; past that window
+  the job id is gone and the progress cannot be replayed — press 「立即统计」 to
+  confirm what is left. Only **fully quitting the DSH client (ending the host
+  process)** interrupts the deletion, and it may leave a half-deleted state.
+- **The 90 seconds are not a failure deadline.** The client pauses monitoring
+  only after **90 seconds without any new progress**, and then merely says the
+  deletion may still be running in the background and can be resumed by
+  re-opening within 10 minutes. Pausing is **not** a failure: it does not clear
+  the job id and does not turn the job into an error. There is also an
+  **8-minute total fallback**.
+- **Only one cleanup task runs at a time.** A second request is refused outright
+  with 已有清理任务在运行，请等待它完成后再试。 (HTTP 409, `already-running`), so the
+  old "accepted first, error later" window is gone. That lock is shared rather than snapshot-only: 快照清理, 删除归档, 批量归档 and the 孤儿缓存 sweep all take the same one, so any one of them blocks the other three, and the `detail` field names the operation and stage that currently holds it.
+- **Ticking nothing does nothing.** With 0 conversations selected, pressing the
+  delete button no longer starts an empty job that would hold the lock: the host
+  answers `accepted:false, reason:'nothing-to-do'` and the UI simply stays put.
 
 ### Limits of deleting a conversation
 
@@ -490,7 +543,7 @@ auto-delete.
 ### Limits of the archive-purge switch
 
 The 批量归档 card carries a switch called 归档后删除快照. When it is on, every conversation
-this card archives also has its `history-file/` ledger sent to the Windows recycle bin.
+this card archives also has its `history-file/` ledger sent to the Windows recycle bin. The card prints one total under its candidate list, 「共占 Z（整会话目录）」, summed over each candidate's whole session directory rather than snapshot bytes. Again, that total is not comparable with 快照清理's snapshot bytes: different measurement, different scope.
 
 - **On by default since 0.35.0.** Switching it off is one gesture; switching it back on
   costs the risk acknowledgement again (tick, then confirm in the risk box).
@@ -510,8 +563,10 @@ this card archives also has its `history-file/` ledger sent to the Windows recyc
   "flip the switch on, archive one to try it" action. It is now read from the live registry at
   startup and the log shows `watch armed — baseline of N`. If the registry is not readable yet
   the baseline stays empty and the first-event path applies (degraded, never unsafe).
-- Deletion still goes to the recycle bin. There is no timer, no size ceiling and no age sweep —
-  those three stay off the table permanently.
+- Deletion still goes to the recycle bin. The measurement side still has no timer, no size
+  ceiling and no age sweep; background pruning is a separate, opt-in path that is **off by
+  default**. Its timer is registered when the plugin loads (once every 60 s), but while it is
+  off each tick only reads the policy and returns — it scans nothing and deletes nothing.
 
 ### Limits of the archive-delete card (删除归档)
 
@@ -527,7 +582,7 @@ this card archives also has its `history-file/` ledger sent to the Windows recyc
   host-side.
 - **The delete is permanent and does NOT use the recycle bin.** It removes the
   conversation together with its transcript — unlike deleting a ledger, which
-  leaves the conversation and the files alone. The confirmation says so.
+  leaves the conversation and the files alone. The confirmation says so, and it names what this card deletes — 「N 个会话的会话目录」, not the snapshot card's 「N 个会话的快照」. The card also totals the rows as 「共占 Z（整会话目录）」, summed over each whole session directory: a different measurement from 快照清理's snapshot bytes, so the two totals are not comparable.
 
 ### Limits of the settings switcher
 
@@ -547,7 +602,10 @@ this card archives also has its `history-file/` ledger sent to the Windows recyc
   bug report.
 - Opening the page still scans nothing: each inspector card records the refresh
   counter it mounted with and only re-runs when that counter actually changes, so
-  the old promise (no scan on render, no timer) is intact.
+  the "no scan on render" promise is intact. The only timer in the plugin is the
+  optional background pruner; it is registered when the plugin loads (once every 60 s),
+  but while it is off (the default) each tick only reads the policy and returns, so it
+  scans nothing and deletes nothing.
 
 ### The six-column row format (since 0.37.0, adjustable since 0.38.0)
 
@@ -568,7 +626,7 @@ One `SessionRow` component draws every row; one `ListHead` component draws every
 - **A broken stored layout cannot eat a column.** Anything read back passes `normaliseColumnLayout`: unknown keys are dropped, missing ones are appended in default order, widths are clamped to each column min/max. One missing column means one missing fact in every list, so the file is never trusted.
 
 - **The dash is not decoration.** A cell that genuinely has no data prints `—` — it is not left blank and the column is not dropped. A blank cell pushes every later column one slot to the left, which is exactly how two lists end up looking like two different schemas.
-- **The dash is a promise.** No cell is ever filled by scanning the disk behind your back. For real numbers, press that card's own button (立即统计 / 诊断 / 扫描) or just open the panel.
+- **The dash is a promise, and it is not zero.** A measured empty directory prints `0 B`; `—` means only that the value could not be read, so the two never collapse into each other. No cell is ever filled by scanning the disk behind your back. For real numbers, press that card's own button (立即统计 / 诊断 / 扫描) or just open the panel.
 - What each column means: **文件大小** = bytes in the session's **whole directory** (transcript + `history-file/` ledger) — that is, what deleting the row frees; **时长** = how long ago the 时间 stamp is (one colour for the whole column — whether a row is past the threshold is answered by its checkbox, not by a hue); **文件数量** = file count of that directory; **工作区名称** = the workspace registry title (e.g. 「DeepSeek Chat」), falling back to the cwd's last segment; **时间** = last snapshot write (archive/idle rows use the conversation's update time, 未分组 uses creation time, favourites use the starred moment).
 - **0.37.2 fixed three more.** 时长 stopped tinting the rows past the threshold (two colours in one column read as two columns). A list that runs out of horizontal room **scrolls sideways** instead of crushing 对话名称 (收藏清单 had squeezed names down to `De…` because its rows also carried three buttons). And 收藏清单 no longer prints dashes for 文件大小 / 文件数量 — a favourite is stored as `{at,title,cwd}`, so the page now asks the host to measure that session's directory.
 - **0.37.1 corrected three of those meanings.** 0.37.0 pointed 文件大小 / 文件数量 at the snapshot ledger, and a ledger only exists for conversations that edited a file — 9 of the 212 archived sessions with a directory on this machine — so both columns read a dash on 96% of the rows. The workspace column printed the cwd's last segment (folder names like `workspace`), not the workspace name at all. Size and count now measure the whole directory; the name comes from the registry.
@@ -620,8 +678,8 @@ branch and shows up under "Ungrouped".
 **Which produces the contradiction you have probably seen**: `check-ungrouped.js`
 scans directories and reports 0, the boot gate reads the registry and reports
 `clean`, yet the sidebar clearly draws the group. Neither can see cache ghosts.
-Measured on this machine: 984 cache files vs 657 session directories →
-**364 ghosts, 9.77 MB**, of which the oldest 318 are more than a week old.
+Measured on this machine: 984 cache files, 657 session directories; 620 of those directories
+have a matching cache → **364 ghosts, 9.77 MB** (318 older than a week; note 984 − 657 ≠ 364).
 
 There is also a **false-alarm class** worth knowing about: a freshly created
 session that has never been used carries **no `blank` flag in its header** — the
@@ -635,7 +693,7 @@ The 「孤儿缓存」 card inside 「缓存与未分组」:
 
 - **Scan** lists orphan cache records read-only (count, size, title, id); the row
   tail is tagged "置顶" or "已归档" — a **label only, no longer a keeper**.
-- **Two-stage**: "试算（不修改任何文件）" first, then a red "确认清理" box.
+- **Two-stage**: "试算（不修改任何文件）" first, then a red "确认清理" box. The real run reports **live progress** — percentage, bytes released, and k/N of the cache files — through the same job snapshot the snapshot card uses, so a long sweep no longer looks like one black-box pass.
 - **Goes to the recycle bin** (`DeleteFile`, recoverable); on failure it degrades
   to `<dshHome>/projcache_quarantine_<stamp>/`.
 - **Everything is deletable by default, pinned and archived rows included**
