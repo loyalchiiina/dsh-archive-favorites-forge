@@ -4,6 +4,46 @@ All notable changes to this project are documented here.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 this project uses [Semantic Versioning](https://semver.org/).
 
+## 0.43.0
+
+- **新增「删除收藏垃圾文件」**（收藏清理 → 收藏清单）：先扫描再按类勾选删除。五类判据写死在宿主 lib/junk-scan.js 的 JUNK_CATEGORIES —— 临时/日志/备份文件、测试残留目录（.probe-home 等）、空目录、未压缩正文残留（同目录已有 .zstd 的旧 session.v*.jsonl）、历史快照（默认不勾）。
+- 删除只认**类别名**：宿主按类别重新扫一遍再删，客户端发不了任意路径；一律送 Windows 回收站（可恢复），session.v*.jsonl.zstd 对话本体永不入选。
+- 新增宿主路由 GET /junk-scan、POST /junk-delete（{keys, confirm, dryRun}）；dryRun 返回「将删」清单，便于先核对。
+
+## 0.42.7 — billion-context（ACP）垃圾缓存清理
+
+- 「缓存与未分组」新增 **billion-context 缓存** 卡片：只读扫描 → 试算 → 清理到 Windows 回收站，带实时进度。清的是上下文压缩插件自己的缓存，**不是对话本体**。
+- 分四类对待：`retrieve/img/<id>` 检索图片缓存（随用随重建，按「保留天数」判定，默认 0 天 = 全部可清）、`*.log.old` / `*.log.N` 日志轮转（直接可清）、`overview-cache*.json` 与 `models-dev.json` 等可重建缓存（需勾选「同时清理可重建缓存」）、其余 `instances/` `writers/` `prefix-affinity.json` 等状态文件**一律保留**。
+- 扫描范围五处：`~/.local/state/billion-context`、`~/.cache/billion-context`、`~/.dsh/storages/dsh-context`、`%LOCALAPPDATA%\billion-context`、`%APPDATA%\billion-context`（不存在的跳过）。
+- 本机实测：共 101.7 MB / 79 项；保留 0 天并勾选可重建时 63 项、94.1 MB 可清（检索图片 71.9 MB、日志 10.5 MB、概览缓存 6.1 MB）；保留 7 天时只清日志 10.5 MB。
+- 新增宿主路由 `GET|POST /billion-cache-diagnose` 与 `POST /billion-cache-clean`（试算默认开，`confirm:true` 才真删；与孤儿缓存共用同一把清理锁与任务轮询）。
+
+## 0.42.6
+
+- 批量删快照的状态文字改为「成功 N / 失败 M」，不再把「尝试过」写成「删了」；失败时带出首个原因，遇到 `no route for POST /snapshot-forget`（宿主还是旧版本）会直接提示「彻底退出 DSH 再启动」。
+- 收藏清单的「共占 …」在 `/favorite-facts` 还没返回时显示「统计中…（正在量快照目录）」，不再把「尚未统计」显示成「共占 0 B」——那是两件事，0 B 会让人误以为快照被删光了。
+
+## 0.42.5
+
+- 收藏清单支持**批量删除快照**：每行新增勾选框，工具条上是「全选当前 N 条 / 清空勾选 / 删除所选快照（N）」；执行时逐条删除并显示「已删 x / y · 释放 …」与进度条，完成后自动刷新各行占用。只删各自的 `<session>/history-file/` 历史快照，对话本体与磁盘文件全部保留，目录进 Windows 回收站可恢复。
+- 宿主 `POST /snapshot-forget` 支持 `sessionIds` 数组（单次上限 500 条，逐条顺序执行并汇总 `deletedCount / bytesFreed / failed / results`），单条 `sessionId` 用法保持不变；仍要求 `confirm:true`。
+- 修复收藏清单筛选条里的显示错误：`共占 …（整会话目录）` 曾被拼在 React 元素对象上，界面出现「只看有快照的 [object Object] · 共占 607 MB」。现在它是同一个 span 的第二个子节点。
+
+## 0.42.4
+
+- 收藏清单每行新增「删快照」：只删除该收藏会话的 `<session>/history-file/` 历史快照（撤销到某一轮用的那份），对话本身与磁盘文件全部保留，目录进 Windows 回收站可恢复。为此新增宿主路由 `POST /snapshot-forget`（`{sessionId, confirm:true}`，一次一个会话，显式确认），与批量 `/snapshot-cleanup` 的「收藏一律拒绝」规则并存——那条拒绝是为防手搓请求批量抹掉收藏，本入口只服务用户在收藏行上的显式单击。
+- 收藏清单尾部动作宽度 205 → 276，容纳新增按钮；无快照的行显示灰色「无快照」占位，不给出可点按钮。
+
+## 0.42.3
+
+- 设置页导航图标改成收纳盒 + 下箭头（归档语义）：注册 `settings.section.icon` 槽（id 必须等于分区 id `archive-favorites`），宿主不再回退通用齿轮。
+
+## 0.42.2 (2026-11-12) — 顶部栏「刷新」左侧新增 ⟳ 检查更新
+
+- 归档助手页头「归档助手」右侧按钮组里，在 ★ Star 与「刷新」之间新增 ⟳：查 npm 最新版 → 有新版变蓝「更新到 vX」→ 再点一键安装到 desktop profile。
+- 复用技能浏览器的全局更新委托（window.__dshUpdClick），行为与其它插件一致。
+- 纯客户端改动：Ctrl+Shift+R 硬刷新生效。
+
 ## 0.42.1 — 2026-11-11
 
 > 重发说明：本版是 0.42.0 的原样重发 —— `lib/index.js` 与 `lib/client.js` 逐字节未改，只修「rc 内核被裸 semver 判成不兼容」这一件元数据事故，外加两处文档口径纠偏。
