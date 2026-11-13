@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 this project uses [Semantic Versioning](https://semver.org/).
 
+## 0.43.1
+
+- **界面重排**：「删除收藏垃圾文件」原先嵌在筛选行里，和「只看有快照的」抢同一行，把行高撑出大片空白、按钮还会拐行。现在改为整宽独立一行卡片，类别改成横向 chip（每类「名称 数量 · 体积」），按钮统一 whiteSpace:nowrap，窄到 320px 也不折行。
+- 精简文案：「删除收藏垃圾文件」→「🗑 垃圾文件」+「扫描」+「删除所选（N）」，未扫描时只显示「未扫描」，不再占一整行提示。
+
 ## 0.43.0
 
 - **新增「删除收藏垃圾文件」**（收藏清理 → 收藏清单）：先扫描再按类勾选删除。五类判据写死在宿主 lib/junk-scan.js 的 JUNK_CATEGORIES —— 临时/日志/备份文件、测试残留目录（.probe-home 等）、空目录、未压缩正文残留（同目录已有 .zstd 的旧 session.v*.jsonl）、历史快照（默认不勾）。
