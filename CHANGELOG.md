@@ -4,6 +4,13 @@ All notable changes to this project are documented here.
 The format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 this project uses [Semantic Versioning](https://semver.org/).
 
+
+## 0.43.2 (2026-11-16)
+
+### 图标配色：写死品牌色，深色主题下不再看不清
+
+- 根因：原 `icon.svg` 用 `stroke="currentColor"`，而 DSH 以 `<img>` / CSS `background-image`（data-URI）方式渲染插件图标，SVG 作为独立文档时 `currentColor` 取初始值黑色 —— 深色主题深底上几乎不可见。
+- 改法：`currentColor` → 写死品牌色 `#F2A93B`；几何、`viewBox`、线宽一律不变；浅色（#F2F3F5）与深色（#212227）两种底色实测均清晰。
 ## 0.43.1
 
 - **界面重排**：「删除收藏垃圾文件」原先嵌在筛选行里，和「只看有快照的」抢同一行，把行高撑出大片空白、按钮还会拐行。现在改为整宽独立一行卡片，类别改成横向 chip（每类「名称 数量 · 体积」），按钮统一 whiteSpace:nowrap，窄到 320px 也不折行。
