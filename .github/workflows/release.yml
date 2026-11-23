@@ -2,17 +2,38 @@ name: release
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 permissions:
   contents: write
+  id-token: write   # OIDC: lets npm verify this workflow without any stored token
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: tag must equal package.json version
+        if: github.event_name == 'push'
         run: |
           V=$(node -p "require('./package.json').version")
           [ "v$V" = "${GITHUB_REF_NAME}" ] || { echo "tag ${GITHUB_REF_NAME} != v$V"; exit 1; }
       - uses: softprops/action-gh-release@v2
+        if: github.event_name == 'push'
         with:
           generate_release_notes: true
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false   # never cache in release builds
+      - name: publish to npm over OIDC (skip if this version already exists)
+        run: |
+          V=$(node -p "require('./package.json').version")
+          if npm view "dsh-archive-favorites-forge@$V" version >/dev/null 2>&1; then
+            echo "dsh-archive-favorites-forge@$V already published — nothing to do"
+            exit 0
+          fi
+          npm publish
