@@ -841,6 +841,16 @@ machine, plus DOM fixtures that mirror the official markup exactly (including
 the selection tick being a bare `<svg>` on the selected row only) — which is
 what exposed each of those.
 
+## Acknowledgements
+
+- **MX** ([@MX2546140156](https://github.com/MX2546140156)): the **first implementation** of
+  "edit-resend / undo a user turn" and "automatic file snapshots" merged in 0.25.0 came from their standalone
+  plugin `dsh-session-manager` v1.0.0. The original undo forked a truncated child session and resent the turn —
+  this project rewrote it as same-session tail shadowing in 0.39.0, and the snapshot storage management,
+  retention, quota/usage reporting and rollback chain were substantially extended afterwards. Per-item landing
+  points, similarity and "how it was originally implemented" are in [CREDITS.md](./CREDITS.md).
+- Thanks to @ripley-xl, @cyt7732 and others for issues and suggestions.
+
 ## License
 
 MIT.

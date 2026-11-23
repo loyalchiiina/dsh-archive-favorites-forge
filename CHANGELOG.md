@@ -5,6 +5,18 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 this project uses [Semantic Versioning](https://semver.org/).
 
 
+## 1.0.1 (2026-11-23) — 来源署名：把已并入的初版实现正式记到作者名下
+
+- 用户口径：「加上这个人得贡献，然后找好他贡献得位置以及采纳得哪些」「落到仓库然后开发者贡献者弄上他怎么实现」。
+- 事实边界（用户 2026-11-23 亲自纠正，已在 CREDITS.md 固化）：① 侧栏永久删除与批量删除是本插件原创，0.24.4（2026-10-19）已有六道护栏，早于任何外部并入；② 用户消息「编辑重发 / 撤销整轮」与 ③「AI 改文件自动快照 + 回滚」的**初版实现**来自 MX 的 `dsh-session-manager` v1.0.0，于 0.25.0（2026-10-29）并入。MX 没有把该包发布到 GitHub（其 GitHub 账号无 DSH 相关仓库），该 v1.0.0 为私下提供的安装包。
+- 改法（全部为文档与元数据，运行代码零改动）：
+  - 新增 `CREDITS.md`：原创边界表、「他是怎么实现的」三条机制说明（DOM 注入三按钮 / `/api/session-turn-info` + fork 截断子会话 + `promptChild` 重发 / `tool/call` 前抢存 + sha256 内容寻址 + manifest 记账 + 日志反推兜底）、逐函数采纳落点表（含结构相似度）、已被 0.39.0 重写的部分、未采纳的部分、并入后 9 / 32 个版本的迭代账。
+  - `README.md` / `README.zh.md`：许可节前新增致谢节（`## Acknowledgements` / `## 致谢`），点明初版来源与已在 0.39.0 重写，并致谢社区 issue 贡献者 @ripley-xl、@cyt7732。
+  - `package.json`：`files` 增加 `CREDITS.md`（现 13 项）；新增 `contributors` 字段记入 MX。
+  - `lib/index.js`：`recordToolCall()`、`restoreFilesBefore()` 的 JSDoc 各加 Provenance 段；`lib/client.js`：`injectTurnActions` 注释头加出处说明。仅注释，不改变逻辑。
+- 验证：`node --check lib/index.js` / `lib/client.js` 均 exit 0；`package.json` JSON 解析通过（version=1.0.1，files 13 项含 CREDITS.md）；改动文件前 3 字节无 BOM；`npm pack --dry-run` 确认 CREDITS.md 已进包。
+- 生效：本版不含运行代码变更，故无需重启或硬刷新；若同时更新了源码目录的 `lib/*.js` 注释，宿主侧彻底退出 DSH 再启动即可（注释对行为无影响）。
+
 ## 1.0.0 (2026-11-18) — 正式版里程碑：功能完善，三端版本统一
 
 - 用户口径：「功能比较完善了」，把三个发布端的版本号统一为 1.0.0，作为正式版里程碑。
