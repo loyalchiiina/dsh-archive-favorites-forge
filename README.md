@@ -66,6 +66,12 @@ Deleting a conversation shows a red confirm step naming exactly what it wipes. T
 
 「撤销此轮」 asks before rolling the session back, and shows what will be removed.
 
+**The first turn can be undone too** (since v1.0.2). It has no previous turn to roll
+back to, so its meaning is **empty the whole conversation back to the start** (only
+the system prompt survives): the dialog is titled 「撤回第 1 轮」, and confirming it
+opens a blank new conversation that **keeps the agent preset you were using** and
+**puts your first message back into the input box**, ready to edit and resend.
+
 ### 11. Cache and ungrouped
 
 ![Cache and ungrouped](assets/12-cache-ungrouped.png)

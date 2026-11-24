@@ -1,6 +1,6 @@
 {
   "name": "dsh-archive-favorites-forge",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Favourite any DSH conversation, copy its session id + transcript absolute path, delete one conversation permanently (guarded), batch-archive conversations idle for more than N hours, filter the sidebar down to favourites, export a conversation list as tab-separated txt, edit-resend or undo any user turn with automatic file snapshots that roll back with it, hand a long conversation over to a fresh window with a compact five-section brief (current goal + full todo + latest artefact progress + artefact/log paths + next steps; old artefacts are paths only), inheriting the original preset by default or picking any preset from a dropdown after unticking, diagnose/clean the sidebar 'Ungrouped' bucket (with a boot-time warning and a dry-run-first one-click fix), sweep orphan projection-cache records that no directory scan can see, and hide the bucket by default — additive slot extensions over the shipped archive feature, editing no official file. 为 DSH 对话加上收藏、复制 ID+路径、单条永久删除、超时批量归档与收藏筛选（收藏清单支持多选一键取消收藏、按大小分档筛选、删除快照三档口径），并导出对话清单；另含会话管理：用户消息可编辑重发、撤销整轮，AI 改过的文件自动快照并在回滚时一并还原；再含一键新窗口继续对话：把长对话蒸馏成五段精简交接书（当前目的 + 完整 todo + 最新产物进度 + 产物/日志路径 + 你现在要做的，旧产物只留路径），默认继承原对话预设，取消勾选可从全部预设下拉挑选，在新窗口自动发送；还有侧栏「未分组」体检：一键只读诊断 + 先试算后执行的清理，并在每次开机时告警；外加清理目录扫描看不见的投影缓存幽灵，且默认就隐藏该分组。全部挂在官方插槽上，不改官方一行代码。",
   "type": "module",
   "main": "lib/index.js",

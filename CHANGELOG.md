@@ -5,6 +5,22 @@ The format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 this project uses [Semantic Versioning](https://semver.org/).
 
 
+## 1.0.2 (2026-11-24) — 首轮撤回可用；删除/撤回后回到空白新对话页并保留预设
+
+- 用户口径：「撤回首轮可以达到我想要的效果」「删除对话后要有新对话」「预设要是撤回前的预设，撤回的首轮内容放在输入框里」。
+- 根因 1（首轮撤回点了没反应，硬证据）：第 1 轮的 `beforeSeq` 指向**日志头部元事件**（如 `agent/inbox/spliced@4`），而 `rewindSession` 的防误删检查要求 `surface.nodes` 中存在 `seq <= beforeSeq` 的节点——实测 surface 首个节点是 `system/message@7`，于是必然命中 `409 stale-boundary`，撤回请求全程无效。表现为「点确认后界面纹丝不动且无任何提示」。
+  - 改法：首轮把 boundary 传 `null`（宿主归一成 `-1`，即「第一个事件之前」，正是 `rewindSession` 注释里给首轮用的值），`keepSeq` 同步用 `-1`。`doUndoTurn` 与 `doDeleteMessage` 两处同改。
+- 根因 2（首轮判据永假）：原判据 `info.beforeSeq === null` 只在 `index === 0` 时成立，实测第 1 轮 `beforeSeq` 是 4/5 这类数字 → 首轮分支从未执行，界面永远显示「撤销此轮」。改为 `Number(info.turn) === 1`。
+- 根因 3（删除后不跳新对话）：原代码在删除**成功后**才调 `isActiveSession()` / `activeSessionId()`，而宿主此时已释放该会话的 `retainedBy.mainView` 引用，判断必为 false → 跳转分支从未进入。改为**请求发出前**先记录 `wasActive` / `activeBefore`。
+- 根因 4（导航被顶掉）：`startSession()` 内部 `connectBlank → replaceMain` 是异步的，而 `layout.beginNavigation()` 实现为「新导航中止旧导航」，`openWorkspaceSession` 在 `if (navigation.aborted) return` 处直接放弃。删除路径原先把导航排在 `refreshSidebarRows()` 之前 → 被侧栏重建冲掉。改为导航排在刷新**之后**；撤回路径延后 400ms 让宿主写完 rewind marker。
+- 根因 5（静默失败）：`fail()` 只给按钮加红框并写 `title`（需悬停才可见），撤回失败时界面毫无反馈。改为每次失败**必弹 toast** 并给出错误原文。
+- 新增能力：
+  - **预设继承**：新增/复用 `affAgentPresetOf()` 读取 `byId[id].projectionValues.agentPreset`，导航改走官方写法 `uiWorkspace.startSession(undefined, { clearPreviousDraft: false, agentPreset })`（与 `ui-agent-preset` 一致），删除与撤回两条路径都先记预设再跳转。
+  - **预填回读校验**：`prefillDraft()` 原调用 `shell.setDraft(text)` 后直接 `return true`，而宿主 `SessionInputShell.setDraft` 开头有 `frozen(this.snapshot.phase)`，输入框未就绪时静默无效。改为写入后回读 `snapshot` / `draftSnapshot` 校验，未落进去则继续轮询重试。
+  - **撤回后预填到新会话**：首轮撤回不再把文本预填回即将被晾在一边的旧会话，改由 `prefillDraftAfterNavigation(text, excludeSessionId)` 轮询等到新会话挂上主视图后再填入，排除旧会话 id 避免白填。
+- 验证（本机官方版实测）：`node --check lib/client.js` exit 0；实装与源码 sha256 同为 `C39F84A5…`（480837 字节），前 3 字节 `77 69 6E` 无 BOM；`dsh_identity_check` 报 **R2 = PASS**（客户端主进程 18:19:17 启动晚于文件 18:17:53）；用户实测「首轮撤回 + 删除跳新对话 + 预设保留 + 输入框回填」全部通过。
+- 生效：仅 `lib/client.js`（客户端 bundle）改动 → **Ctrl+Shift+R 硬刷新**；宿主侧 `lib/index.js` 本版零改动。
+
 ## 1.0.1 (2026-11-23) — 来源署名：把已并入的初版实现正式记到作者名下
 
 - 用户口径：「加上这个人得贡献，然后找好他贡献得位置以及采纳得哪些」「落到仓库然后开发者贡献者弄上他怎么实现」。
