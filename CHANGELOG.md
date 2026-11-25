@@ -1,3 +1,7 @@
+## 1.0.3 — 2026-11-26
+
+- perf: 定时归档 tick（60s，SCHED_HIDE_TICK_MS）与编辑器挂载看门狗（300ms，仅编辑器打开期存活）回调开头加 document.hidden 门控；窗口隐藏时不触发 DOM 检查。理由 = 后台时 DOM 检查无意义，纯占渲染主线程。
+
 # Changelog
 
 All notable changes to this project are documented here.
